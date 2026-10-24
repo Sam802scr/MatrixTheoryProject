@@ -1,0 +1,63 @@
+#! /c/Source/iverilog-install/bin/vvp
+:ivl_version "12.0 (devel)" "(s20150603-1539-g2693dd32b)";
+:ivl_delay_selection "TYPICAL";
+:vpi_time_precision + 0;
+:vpi_module "C:\iverilog\lib\ivl\system.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_sys.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_textio.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2005_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\va_math.vpi";
+S_000001850b709fc0 .scope module, "tb_mac" "tb_mac" 2 2;
+ .timescale 0 0;
+v000001850b7065e0_0 .var "a", 3 0;
+v000001850b706680_0 .var "acc", 7 0;
+v000001850b706720_0 .var "b", 3 0;
+v000001850b7067c0_0 .net "result", 7 0, L_000001850b754330;  1 drivers
+S_000001850b70bd40 .scope module, "dut" "mac" 2 7, 3 2 0, S_000001850b709fc0;
+ .timescale 0 0;
+    .port_info 0 /INPUT 4 "a";
+    .port_info 1 /INPUT 4 "b";
+    .port_info 2 /INPUT 8 "acc";
+    .port_info 3 /OUTPUT 8 "result";
+v000001850b70a150_0 .net *"_ivl_0", 7 0, L_000001850b706860;  1 drivers
+L_000001850b79d858 .functor BUFT 1, C4<0000>, C4<0>, C4<0>, C4<0>;
+v000001850b706c50_0 .net *"_ivl_3", 3 0, L_000001850b79d858;  1 drivers
+v000001850b70bed0_0 .net *"_ivl_4", 7 0, L_000001850b753bb0;  1 drivers
+L_000001850b79d8a0 .functor BUFT 1, C4<0000>, C4<0>, C4<0>, C4<0>;
+v000001850b744630_0 .net *"_ivl_7", 3 0, L_000001850b79d8a0;  1 drivers
+v000001850b7446d0_0 .net "a", 3 0, v000001850b7065e0_0;  1 drivers
+v000001850b744770_0 .net "acc", 7 0, v000001850b706680_0;  1 drivers
+v000001850b744810_0 .net "b", 3 0, v000001850b706720_0;  1 drivers
+v000001850b7064a0_0 .net "product", 7 0, L_000001850b754290;  1 drivers
+v000001850b706540_0 .net "result", 7 0, L_000001850b754330;  alias, 1 drivers
+L_000001850b706860 .concat [ 4 4 0 0], v000001850b7065e0_0, L_000001850b79d858;
+L_000001850b753bb0 .concat [ 4 4 0 0], v000001850b706720_0, L_000001850b79d8a0;
+L_000001850b754290 .arith/mult 8, L_000001850b706860, L_000001850b753bb0;
+L_000001850b754330 .arith/sum 8, v000001850b706680_0, L_000001850b754290;
+    .scope S_000001850b709fc0;
+T_0 ;
+    %pushi/vec4 3, 0, 4;
+    %store/vec4 v000001850b7065e0_0, 0, 4;
+    %pushi/vec4 4, 0, 4;
+    %store/vec4 v000001850b706720_0, 0, 4;
+    %pushi/vec4 10, 0, 8;
+    %store/vec4 v000001850b706680_0, 0, 8;
+    %delay 10, 0;
+    %vpi_call 2 19 "$display", "MAC: 10 + (3 * 4) = %0d", v000001850b7067c0_0 {0 0 0};
+    %pushi/vec4 5, 0, 4;
+    %store/vec4 v000001850b7065e0_0, 0, 4;
+    %pushi/vec4 6, 0, 4;
+    %store/vec4 v000001850b706720_0, 0, 4;
+    %pushi/vec4 20, 0, 8;
+    %store/vec4 v000001850b706680_0, 0, 8;
+    %delay 10, 0;
+    %vpi_call 2 25 "$display", "MAC: 20 + (5 * 6) = %0d", v000001850b7067c0_0 {0 0 0};
+    %vpi_call 2 27 "$finish" {0 0 0};
+    %end;
+    .thread T_0;
+# The file index is used to find the file name in the following table.
+:file_names 4;
+    "N/A";
+    "<interactive>";
+    "testbench/tb_mac.v";
+    "rtl/mac.v";

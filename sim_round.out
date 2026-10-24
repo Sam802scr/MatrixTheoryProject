@@ -1,0 +1,57 @@
+#! /c/Source/iverilog-install/bin/vvp
+:ivl_version "12.0 (devel)" "(s20150603-1539-g2693dd32b)";
+:ivl_delay_selection "TYPICAL";
+:vpi_time_precision - 12;
+:vpi_module "C:\iverilog\lib\ivl\system.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_sys.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_textio.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2005_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\va_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2009.vpi";
+S_000001c7cdb2bbd0 .scope package, "$unit" "$unit" 2 1;
+ .timescale 0 0;
+S_000001c7cdb2bd60 .scope module, "tb_stochastic_round" "tb_stochastic_round" 3 4;
+ .timescale -9 -12;
+v000001c7cdb2ad40_0 .var "random_bits", 7 0;
+v000001c7cdb42830_0 .net "round_up", 0 0, L_000001c7cdb42970;  1 drivers
+v000001c7cdb428d0_0 .var "threshold", 7 0;
+S_000001c7cdb2a9d0 .scope module, "dut" "stochastic_round" 3 10, 4 2 0, S_000001c7cdb2bd60;
+ .timescale 0 0;
+    .port_info 0 /INPUT 8 "random_bits";
+    .port_info 1 /INPUT 8 "threshold";
+    .port_info 2 /OUTPUT 1 "round_up";
+P_000001c7cdb2cad0 .param/l "RAND_WIDTH" 0 4 3, +C4<00000000000000000000000000001000>;
+v000001c7cdb2ab60_0 .net "random_bits", 7 0, v000001c7cdb2ad40_0;  1 drivers
+v000001c7cdb2ac00_0 .net "round_up", 0 0, L_000001c7cdb42970;  alias, 1 drivers
+v000001c7cdb2aca0_0 .net "threshold", 7 0, v000001c7cdb428d0_0;  1 drivers
+L_000001c7cdb42970 .cmp/gt 8, v000001c7cdb428d0_0, v000001c7cdb2ad40_0;
+    .scope S_000001c7cdb2bd60;
+T_0 ;
+    %pushi/vec4 128, 0, 8;
+    %store/vec4 v000001c7cdb428d0_0, 0, 8;
+    %pushi/vec4 10, 0, 8;
+    %store/vec4 v000001c7cdb2ad40_0, 0, 8;
+    %delay 1000, 0;
+    %vpi_call/w 3 21 "$display", "Random=10, round_up=%b (expected 1)", v000001c7cdb42830_0 {0 0 0};
+    %pushi/vec4 200, 0, 8;
+    %store/vec4 v000001c7cdb2ad40_0, 0, 8;
+    %delay 1000, 0;
+    %vpi_call/w 3 25 "$display", "Random=200, round_up=%b (expected 0)", v000001c7cdb42830_0 {0 0 0};
+    %pushi/vec4 127, 0, 8;
+    %store/vec4 v000001c7cdb2ad40_0, 0, 8;
+    %delay 1000, 0;
+    %vpi_call/w 3 29 "$display", "Random=127, round_up=%b (expected 1)", v000001c7cdb42830_0 {0 0 0};
+    %pushi/vec4 128, 0, 8;
+    %store/vec4 v000001c7cdb2ad40_0, 0, 8;
+    %delay 1000, 0;
+    %vpi_call/w 3 33 "$display", "Random=128, round_up=%b (expected 0)", v000001c7cdb42830_0 {0 0 0};
+    %vpi_call/w 3 35 "$finish" {0 0 0};
+    %end;
+    .thread T_0;
+# The file index is used to find the file name in the following table.
+:file_names 5;
+    "N/A";
+    "<interactive>";
+    "-";
+    "testbench/tb_stochastic_round.v";
+    "rtl/stochastic_round.v";

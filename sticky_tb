@@ -1,0 +1,107 @@
+#! /c/Source/iverilog-install/bin/vvp
+:ivl_version "12.0 (devel)" "(s20150603-1539-g2693dd32b)";
+:ivl_delay_selection "TYPICAL";
+:vpi_time_precision - 12;
+:vpi_module "C:\iverilog\lib\ivl\system.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_sys.vpi";
+:vpi_module "C:\iverilog\lib\ivl\vhdl_textio.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2005_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\va_math.vpi";
+:vpi_module "C:\iverilog\lib\ivl\v2009.vpi";
+S_000001d4903cb6c0 .scope package, "$unit" "$unit" 2 1;
+ .timescale 0 0;
+S_000001d490416810 .scope module, "tb_fp12_sticky_round" "tb_fp12_sticky_round" 3 4;
+ .timescale -9 -12;
+P_000001d4903c9580 .param/l "R" 1 3 6, +C4<00000000000000000000000000010010>;
+v000001d490414450_0 .var "random_low", 15 0;
+v000001d4904144f0_0 .net "s1_prime", 0 0, L_000001d490462360;  1 drivers
+v000001d490414590_0 .net "s2_prime", 0 0, L_000001d490462a40;  1 drivers
+v000001d490414630_0 .var "shifted_y_low", 15 0;
+v000001d490462cc0_0 .net "sticky_sum", 16 0, L_000001d490462540;  1 drivers
+S_000001d4904169a0 .scope module, "dut" "fp12_sticky_round" 3 15, 4 2 0, S_000001d490416810;
+ .timescale 0 0;
+    .port_info 0 /INPUT 16 "shifted_y_low";
+    .port_info 1 /INPUT 16 "random_low";
+    .port_info 2 /OUTPUT 17 "sticky_sum";
+    .port_info 3 /OUTPUT 1 "s1_prime";
+    .port_info 4 /OUTPUT 1 "s2_prime";
+P_000001d4903c95c0 .param/l "R" 0 4 3, +C4<00000000000000000000000000010010>;
+L_000001d490463008 .functor BUFT 1, C4<0>, C4<0>, C4<0>, C4<0>;
+v000001d4903e2e50_0 .net/2u *"_ivl_0", 0 0, L_000001d490463008;  1 drivers
+v000001d4903cbe90_0 .net *"_ivl_2", 16 0, L_000001d490462d60;  1 drivers
+L_000001d490463050 .functor BUFT 1, C4<0>, C4<0>, C4<0>, C4<0>;
+v000001d4903ca420_0 .net/2u *"_ivl_4", 0 0, L_000001d490463050;  1 drivers
+v000001d4903ca260_0 .net *"_ivl_6", 16 0, L_000001d490462ea0;  1 drivers
+v000001d490416b30_0 .net "random_low", 15 0, v000001d490414450_0;  1 drivers
+v000001d490416bd0_0 .net "s1_prime", 0 0, L_000001d490462360;  alias, 1 drivers
+v000001d490414270_0 .net "s2_prime", 0 0, L_000001d490462a40;  alias, 1 drivers
+v000001d490414310_0 .net "shifted_y_low", 15 0, v000001d490414630_0;  1 drivers
+v000001d4904143b0_0 .net "sticky_sum", 16 0, L_000001d490462540;  alias, 1 drivers
+L_000001d490462d60 .concat [ 16 1 0 0], v000001d490414630_0, L_000001d490463008;
+L_000001d490462ea0 .concat [ 16 1 0 0], v000001d490414450_0, L_000001d490463050;
+L_000001d490462540 .arith/sum 17, L_000001d490462d60, L_000001d490462ea0;
+L_000001d490462360 .part L_000001d490462540, 16, 1;
+L_000001d490462a40 .part L_000001d490462540, 15, 1;
+    .scope S_000001d490416810;
+T_0 ;
+    %vpi_call/w 3 24 "$display", "Sticky Round block tests" {0 0 0};
+    %pushi/vec4 0, 0, 16;
+    %store/vec4 v000001d490414630_0, 0, 16;
+    %pushi/vec4 0, 0, 16;
+    %store/vec4 v000001d490414450_0, 0, 16;
+    %delay 1000, 0;
+    %load/vec4 v000001d490462cc0_0;
+    %cmpi/ne 0, 0, 17;
+    %jmp/0xz  T_0.0, 6;
+    %vpi_call/w 3 31 "$fatal", 32'sb00000000000000000000000000000001, "Test 1 failed" {0 0 0};
+T_0.0 ;
+    %vpi_call/w 3 32 "$display", "Test 1 PASS" {0 0 0};
+    %pushi/vec4 5, 0, 16;
+    %store/vec4 v000001d490414630_0, 0, 16;
+    %pushi/vec4 3, 0, 16;
+    %store/vec4 v000001d490414450_0, 0, 16;
+    %delay 1000, 0;
+    %load/vec4 v000001d490462cc0_0;
+    %cmpi/ne 8, 0, 17;
+    %jmp/0xz  T_0.2, 6;
+    %vpi_call/w 3 39 "$fatal", 32'sb00000000000000000000000000000001, "Test 2 failed" {0 0 0};
+T_0.2 ;
+    %vpi_call/w 3 40 "$display", "Test 2 PASS" {0 0 0};
+    %pushi/vec4 65535, 0, 16;
+    %store/vec4 v000001d490414630_0, 0, 16;
+    %pushi/vec4 1, 0, 16;
+    %store/vec4 v000001d490414450_0, 0, 16;
+    %delay 1000, 0;
+    %load/vec4 v000001d490462cc0_0;
+    %cmpi/ne 65536, 0, 17;
+    %jmp/0xz  T_0.4, 6;
+    %vpi_call/w 3 47 "$fatal", 32'sb00000000000000000000000000000001, "Test 3 failed" {0 0 0};
+T_0.4 ;
+    %vpi_call/w 3 48 "$display", "Test 3 PASS" {0 0 0};
+    %load/vec4 v000001d4904144f0_0;
+    %load/vec4 v000001d490462cc0_0;
+    %parti/s 1, 16, 6;
+    %cmp/ne;
+    %jmp/1 T_0.8, 6;
+    %flag_mov 8, 6;
+    %load/vec4 v000001d490414590_0;
+    %load/vec4 v000001d490462cc0_0;
+    %parti/s 1, 15, 5;
+    %cmp/ne;
+    %flag_or 6, 8;
+T_0.8;
+    %jmp/0xz  T_0.6, 6;
+    %vpi_call/w 3 53 "$fatal", 32'sb00000000000000000000000000000001, "Test 4 failed" {0 0 0};
+T_0.6 ;
+    %vpi_call/w 3 54 "$display", "Test 4 PASS" {0 0 0};
+    %vpi_call/w 3 56 "$display", "All Sticky Round block tests passed." {0 0 0};
+    %vpi_call/w 3 57 "$finish" {0 0 0};
+    %end;
+    .thread T_0;
+# The file index is used to find the file name in the following table.
+:file_names 5;
+    "N/A";
+    "<interactive>";
+    "-";
+    "testbench/tb_fp12_sticky_round.v";
+    "rtl/fp12_sticky_round.v";

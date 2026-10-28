@@ -1,140 +1,89 @@
-
-module fp12_add_sr_eager (
-    input  wire [11:0] a,
-    input  wire [11:0] b,
-    input  wire [17:0] random_bits,
-    output reg  [11:0] result
+// FP12 adder with EAGER stochastic rounding (paper Fig. 3b / Fig. 4).
+//   swap/align -> split shifted y into top P+1 bits (main adder) and low R-2 bits (Sticky Round, first rounding
+//   stage, done BEFORE normalization) -> normalize (far path: carry-dependent shift; close path: LZD)
+//   -> Round Correction (second stage) -> increment.
+// random_bits = {R1,R2, R3[R-3:0]}.
+module fp12_add_sr_eager #(parameter R = 18) (
+    input  wire [11:0]  a,
+    input  wire [11:0]  b,
+    input  wire [R-1:0] random_bits,
+    output reg  [11:0]  result
 );
+    localparam P = 6;
+    reg        sx, sy, sub, far;
+    reg [5:0]  ex, ey, mx, my, d;
+    reg [P+R-2:0] Ys;
+    reg [P:0]  Ytop;
+    reg [R-3:0] Ylow, Llow;
+    reg        borrow;
+    reg [P+1:0] Ttop;
+    reg [P+3:0] V, Vn;
+    reg [3:0]  j, jfar, jclose;
+    reg [5:0]  sig;
+    reg [6:0]  mz;
+    reg [1:0]  g;
+    integer    ez, i;
 
-    reg sign_a, sign_b, sign_result;
-    reg [5:0] exp_a, exp_b, exp_work;
-    reg [5:0] sig_a, sig_b;
+    wire [R-3:0] R3  = random_bits[R-3:0];
+    wire [1:0]   R12 = random_bits[R-1:R-2];
 
-    reg [31:0] mag_a, mag_b, mag;
-    reg [31:0] rem_bits;
+    // ---- first rounding stage (uses Llow = low bits of the 2's-complemented aligned operand)
+    wire s1, s2, s3;
+    fp12_sticky_round #(.R(R)) u_sticky (.y_low(Llow), .rand_low(R3), .s1(s1), .s2(s2), .s3(s3));
 
-    reg [6:0] sig_round;
-    reg round_up;
-
-    integer shift_amt;
-    integer i;
+    // ---- second stage + correction
+    wire up;
+    fp12_round_correction u_corr (.j(j), .norm_rs(Vn[3:2]), .g(g), .r12(R12), .s1(s1), .s2(s2), .s3(s3), .up(up));
 
     always @* begin
-        sign_a = a[11];
-        sign_b = b[11];
-        exp_a = a[10:5];
-        exp_b = b[10:5];
-
-        sig_a = {1'b1, a[4:0]};
-        sig_b = {1'b1, b[4:0]};
-
-        exp_work = 0;
-        sign_result = 0;
-        mag_a = 0;
-        mag_b = 0;
-        mag = 0;
-        rem_bits = 0;
-        sig_round = 0;
-        round_up = 0;
-        shift_amt = 0;
-        result = 0;
-
-        // Normal finite values and zero encodings.
-        if (exp_a != 63 && exp_b != 63) begin
-            if (exp_a == 0)
-                sig_a = 0;
-
-            if (exp_b == 0)
-                sig_b = 0;
-
-            if (sig_a != 0 || sig_b != 0) begin
-                // Extend significands to retain rounding bits.
-                mag_a = {sig_a, 18'd0};
-                mag_b = {sig_b, 18'd0};
-
-                // Align the operand with the smaller exponent.
-                if (exp_a >= exp_b) begin
-                    exp_work = exp_a;
-                    shift_amt = exp_a - exp_b;
-
-                    if (shift_amt >= 32)
-                        mag_b = 0;
-                    else
-                        mag_b = mag_b >> shift_amt;
-                end else begin
-                    exp_work = exp_b;
-                    shift_amt = exp_b - exp_a;
-
-                    if (shift_amt >= 32)
-                        mag_a = 0;
-                    else
-                        mag_a = mag_a >> shift_amt;
-                end
-
-                // Add or subtract the aligned magnitudes.
-                if (sign_a == sign_b) begin
-                    mag = mag_a + mag_b;
-                    sign_result = sign_a;
-                end else if (mag_a >= mag_b) begin
-                    mag = mag_a - mag_b;
-                    sign_result = sign_a;
-                end else begin
-                    mag = mag_b - mag_a;
-                    sign_result = sign_b;
-                end
-
-                if (mag != 0) begin
-                    // Normalize the result.
-                    if (mag[24]) begin
-                        mag = mag >> 1;
-                        exp_work = exp_work + 1'b1;
-                    end else begin
-                        for (i = 0; i < 24; i = i + 1) begin
-                            if (!mag[23] && exp_work > 1) begin
-                                mag = mag << 1;
-                                exp_work = exp_work - 1'b1;
-                            end
-                        end
-                    end
-
-                    // Handle underflow in this prototype.
-                    if (exp_work <= 1 && !mag[23]) begin
-                        result = 0;
-                    end else begin
-                        // Retain the six-bit significand including
-                        // the hidden bit, plus the stochastic remainder.
-                        sig_round = {1'b0, mag[23:18]};
-                        rem_bits = mag[17:0];
-
-                        // Stochastic rounding:
-                        // round up when the random value is below
-                        // the discarded remainder.
-                        round_up = ({14'd0, random_bits} < rem_bits);
-
-                        if (round_up)
-                            sig_round = sig_round + 1'b1;
-
-                        // Handle significand overflow.
-                        if (sig_round[6]) begin
-                            sig_round = 7'd32;
-                            exp_work = exp_work + 1'b1;
-                        end
-
-                        // Encode the result.
-                        if (exp_work >= 63)
-                            result = {sign_result, 6'd63, 5'd0};
-                        else if (exp_work == 0)
-                            result = 0;
-                        else
-                            result = {
-                                sign_result,
-                                exp_work,
-                                sig_round[4:0]
-                            };
-                    end
-                end
+        result = 12'd0;
+        sx = 0; sy = 0; sub = 0; far = 0; ex = 0; ey = 0; mx = 0; my = 0; d = 0; Ys = 0; Ytop = 0; Ylow = 0;
+        Llow = 0; borrow = 0; Ttop = 0; V = 0; Vn = 0; j = 0; jfar = 0; jclose = 0; sig = 0; mz = 0; g = 0; ez = 0;
+        if (a[10:5] == 6'd63)               result = a;
+        else if (b[10:5] == 6'd63)          result = b;
+        else if (a[10:5] == 0 && b[10:5] == 0) result = 12'd0;
+        else if (a[10:5] == 0)              result = b;
+        else if (b[10:5] == 0)              result = a;
+        else begin
+            // (i) reorder / swap (exponent first, significand on a tie)
+            if (a[10:0] >= b[10:0]) begin
+                sx = a[11]; ex = a[10:5]; mx = {1'b1, a[4:0]};
+                sy = b[11]; ey = b[10:5]; my = {1'b1, b[4:0]};
+            end else begin
+                sx = b[11]; ex = b[10:5]; mx = {1'b1, b[4:0]};
+                sy = a[11]; ey = a[10:5]; my = {1'b1, a[4:0]};
+            end
+            d   = ex - ey;
+            sub = sx ^ sy;
+            far = (d >= 2);
+            // (ii) alignment: shifted y is P+R-1 bits; main adder gets the top P+1, Sticky Round the low R-2
+            Ys   = (my << (R - 1)) >> d;
+            Ytop = Ys[P+R-2:R-2];
+            Ylow = Ys[R-3:0];
+            // 2's complement of the full word, split
+            Llow   = sub ? (~Ylow + 1'b1) : Ylow;
+            borrow = sub & (Ylow != 0);
+            // (iii) main adder  (P+2 bits: carry, P significand bits, 1 guard)
+            Ttop = sub ? ({1'b0, mx, 1'b0} - {1'b0, Ytop} - borrow)
+                       : ({1'b0, mx, 1'b0} + {1'b0, Ytop});
+            if (Ttop != 0 || Llow != 0) begin
+                // (iv) normalization.  far path: j in {0,1,2}; close path: LZD (Llow == 0 there)
+                jfar = Ttop[P+1] ? 4'd0 : (Ttop[P] ? 4'd1 : 4'd2);
+                jclose = 4'd0;
+                for (i = 0; i < P + 2; i = i + 1) if (Ttop[i]) jclose = (P + 1) - i;
+                j  = far ? jfar : jclose;
+                g  = {Llow[R-3], Llow[R-4]};
+                V  = {Ttop, 2'b00};                      // zero fill: normalizer knows nothing below the adder
+                Vn = V << j;
+                sig = Vn[P+3:4];
+                // (v) Round Correction + increment
+                mz = {1'b0, sig} + up;
+                ez = ex + 1 - j;
+                if (mz[6]) begin mz = 7'd32; ez = ez + 1; end
+                if (ez < 1)       result = 12'd0;
+                else if (ez > 62) result = {sx, 6'd62, 5'h1F};
+                else              result = {sx, ez[5:0], mz[4:0]};
             end
         end
     end
-
 endmodule

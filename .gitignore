@@ -1,0 +1,10 @@
+build/
+*.out
+*.vcd
+__pycache__/
+*.pyc
+sticky_check
+eager_test
+tb_vectors_sim
+tb_mac_sim
+reference_model/vectors/

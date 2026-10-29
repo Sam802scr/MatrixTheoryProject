@@ -3,8 +3,13 @@ build/
 *.vcd
 __pycache__/
 *.pyc
-sticky_check
-eager_test
 tb_vectors_sim
 tb_mac_sim
 reference_model/vectors/
+synth/*.lib
+data/
+imagewoof2/
+*.pt
+report/*.aux
+report/*.log
+report/*.out

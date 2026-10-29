@@ -1,0 +1,26 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}\usepackage{booktabs,hyperref}
+\title{Reproduction of ``A Stochastic Rounding-Enabled Low-Precision Floating-Point MAC for DNN Training'' (DATE 2024)}
+\author{Samagna Potham}\date{\today}
+\begin{document}\maketitle
+\section{What was implemented}
+FP8 (E5M2) exact multiplier, FP12 (E6M5) accumulator with round-to-nearest, lazy stochastic rounding and the paper's eager stochastic
+rounding adder (Sticky Round + Round Correction), a Galois LFSR, and a complete MAC in Verilog. A bit-exact Python golden model,
+a PyTorch emulator and a fused Numba CUDA kernel run the same arithmetic for training.
+\section{Verification}
+Adder RTL vs.\ golden model: 180{,}993 vectors at $r=18$ and 30{,}000 each at $r\in\{9,12,14,16\}$, zero mismatches (RN, lazy, eager);
+MAC with LFSR: 4000 steps, zero mismatches. Paper's brute-force test (10000 pairs $\times$ 1000 random words): all results are one of the two
+neighbouring FP12 values and no pair's round-up frequency is inconsistent with the ideal probability (exact binomial test, $p<10^{-6}$).
+\section{Hardware cost (open-source proxy)}
+Yosys + ABC mapped to the Nangate 45\,nm library, adders only (absolute numbers differ from the paper's Synopsys/28\,nm flow; compare ratios).
+\begin{table}[h]\centering\begin{tabular}{lrrr}\toprule Design & $r$ & Area ($\mu$m$^2$) & Delay (ps)\\\midrule
+RN E6M5 & -- & 895 & 1205\\ SR lazy E6M5 & 9 & 971 & 1281\\ SR eager E6M5 & 9 & 948 & 1188\\
+SR lazy E6M5 & 18 & 1182 & 1431\\ SR eager E6M5 & 18 & 1145 & 1270\\\bottomrule\end{tabular}\end{table}
+Eager is smaller and faster than lazy at both widths (area $-2$ to $-3\%$, delay $-7$ to $-11\%$); the paper reports larger gains.
+Synthesis noise for identical logic is about $\pm7\%$ area. Energy, FP16/FP32 baselines and subnormal support were not evaluated.
+\section{Training accuracy}
+\input{../results/tables.tex}
+\section{Deviations and limitations}
+See \texttt{CHECKLIST.md}: assumed LFSR parameters, FP8 handling of subnormals/overflow, extra normalization path for far-path subtraction,
+software FP16/BF16 baselines, no subnormal-support configurations, ResNet-50 preprocessing assumptions.
+\end{document}

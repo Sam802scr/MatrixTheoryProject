@@ -50,3 +50,15 @@ with open(os.path.join(OUT, "mac_vec.hex"), "w") as f:
             acc[m] = mac(acc[m], a, b, w, m, R)
         f.write(f"{a:02x}{b:02x}{acc['rn']:03x}{acc['lazy']:03x}{acc['eager']:03x}\n")
 print(f"vec.hex: {n_add} adder vectors   mac_vec.hex: {N} MAC steps")
+
+
+# ---- vectors for other random-bit widths (paper sweeps r = 9, 12, 14, 16, 18)
+for rr in (9, 12, 14, 16):
+    rg = random.Random(100 + rr)
+    with open(os.path.join(OUT, f"vec_r{rr}.hex"), "w") as f:
+        for _ in range(30000):
+            d = rg.choice([0, 0, 1, 1, 2, 3, 4, 6, 8, 12, 30]); e = rg.randrange(1, 63); e2 = max(1, min(62, e - d))
+            a = rg.randrange(2) << 11 | e << 5 | rg.randrange(32); b = rg.randrange(2) << 11 | e2 << 5 | rg.randrange(32)
+            w = rg.randrange(1 << rr)
+            f.write(f"{a:03x}{b:03x}{w:05x}{add_rn(a,b):03x}{add_lazy(a,b,w,rr):03x}{add_eager(a,b,w,rr):03x}\n")
+print("vec_r{9,12,14,16}.hex written")

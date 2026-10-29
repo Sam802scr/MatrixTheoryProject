@@ -7,4 +7,8 @@ mkdir -p build
 iverilog -g2012 -o build/tb_vectors     $RTL testbench/tb_vectors.v
 iverilog -g2012 -o build/tb_mac_vectors $RTL testbench/tb_mac_vectors.v
 vvp build/tb_vectors     | grep -v finish
+for R in 9 12 14 16; do
+  iverilog -g2012 -P tb_vectors.RR=$R -P tb_vectors.FILE=\"reference_model/vectors/vec_r$R.hex\" -o build/tb_r$R $RTL testbench/tb_vectors.v
+  echo -n "r=$R: "; vvp build/tb_r$R | grep -E "mismatches"
+done
 vvp build/tb_mac_vectors | grep -v finish

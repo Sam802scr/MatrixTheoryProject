@@ -1,0 +1,23 @@
+\begin{table}[h]\centering\caption{resnet20: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
+Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
+FP32 baseline & 91.47 & -- & -- & -- \\
+RN, FP16 acc. (E5M10) & 91.10 & -- & -- & -- \\
+RN, BF16 acc. (E8M7) & 88.79 & -- & -- & -- \\
+RN, E6M5 acc. & 83.03 & -- & -- & -- \\
+SR eager, E6M5, r=9 & 43.11 & -- & -- & -- \\
+SR eager, E6M5, r=12 & 89.34 & -- & -- & -- \\
+SR eager, E6M5, r=16, no sub & 90.67 & -- & -- & -- \\
+SR eager, E6M5, r=18, no sub & 91.39 & -- & -- & -- \\
+\hline\end{tabular}\end{table}
+\begin{table}[h]\centering\caption{vgg16: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
+Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
+FP32 baseline & 93.46 & -- & -- & -- \\
+RN, FP16 acc. & 93.06 & -- & -- & -- \\
+SR eager, E6M5, r=18, no sub & 93.11 & -- & -- & -- \\
+\hline\end{tabular}\end{table}
+\begin{table}[h]\centering\caption{resnet50: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
+Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
+FP32 baseline & 80.94 & -- & -- & -- \\
+RN, FP16 acc. & 80.30 & -- & -- & -- \\
+SR eager, E6M5, r=18, no sub & 80.33 & -- & -- & -- \\
+\hline\end{tabular}\end{table}

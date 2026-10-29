@@ -13,12 +13,24 @@ P = 6
 MASK = (1 << 17) | (1 << 10)          # x^18 + x^11 + 1 (Galois)
 
 @cuda.jit(device=True)
-def _bitlen(x, n):
-    bl = 0
-    for i in range(n):
-        if (x >> i) & 1:
-            bl = i + 1
-    return bl
+def _bitlen(x, n):                      # bit length of x (< 2^32) by binary search: 5 compares instead of an n-step loop
+    b = 0
+    if x >= 65536:
+        x >>= 16
+        b += 16
+    if x >= 256:
+        x >>= 8
+        b += 8
+    if x >= 16:
+        x >>= 4
+        b += 4
+    if x >= 4:
+        x >>= 2
+        b += 2
+    if x >= 2:
+        x >>= 1
+        b += 1
+    return b + x
 
 @cuda.jit(device=True)
 def _pack(sx, ez, mz):
@@ -159,7 +171,7 @@ def _add(a, b, rand, mode, r):
 
 @cuda.jit
 def gemm_kernel(A, B, out, seeds, M, N, K, mode, r):
-    i, j = cuda.grid(2)
+    j, i = cuda.grid(2)                 # threadIdx.x walks the columns j -> coalesced loads of B and stores of out
     if i < M and j < N:
         st = np.int64(seeds[i, j])
         acc = np.int64(0)
@@ -189,8 +201,8 @@ def gemm_codes(A8, B8, mode='eager', seeds=None, r=18):
         M, K = A8.shape; N = B8.shape[1]
         out = np.zeros((M, N), dtype=np.int32)
         args = (A8.astype(np.int32), B8.astype(np.int32), out, seeds.astype(np.int32))
-    tpb = (8, 32)
-    blocks = ((M + tpb[0] - 1) // tpb[0], (N + tpb[1] - 1) // tpb[1])
+    tpb = (32, 8)                        # (columns, rows)
+    blocks = ((N + tpb[0] - 1) // tpb[0], (M + tpb[1] - 1) // tpb[1])
     gemm_kernel[blocks, tpb](*args, M, N, K, MODES[mode], r)
     if is_torch:
         cuda.synchronize(); return out.to(torch.int64)

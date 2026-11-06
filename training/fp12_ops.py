@@ -189,7 +189,7 @@ def fp12_gemm_codes(A8, B8, mode='eager', stream='lfsr', seed=1, r=18, seeds=Non
     acc = torch.zeros(M, N, dtype=torch.int64, device=dev)
     for k in range(K):
         p = fp8_mul(A8[:, k:k + 1], B8[k:k + 1, :])
-        acc = add(acc, p, st.next() if mode != 'rn' else None, r)
+        acc = add(acc, p, (st.next() & ((1 << r) - 1)) if mode != 'rn' else None, r)     # use r random bits of the 18-bit LFSR word
     return acc
 
 def fp12_gemm(A, B, **kw):

@@ -174,12 +174,13 @@ def gemm_kernel(A, B, out, seeds, M, N, K, mode, r):
     j, i = cuda.grid(2)                 # threadIdx.x walks the columns j -> coalesced loads of B and stores of out
     if i < M and j < N:
         st = np.int64(seeds[i, j])
+        rmask = (np.int64(1) << r) - 1       # use r random bits of the 18-bit LFSR word
         acc = np.int64(0)
         for k in range(K):
             p = _mul(np.int64(A[i, k]), np.int64(B[k, j]))
             if mode != 2:
                 st = _lfsr18(st)
-            acc = _add(acc, p, st, mode, r)
+            acc = _add(acc, p, st & rmask, mode, r)
         out[i, j] = acc
 
 @cuda.jit

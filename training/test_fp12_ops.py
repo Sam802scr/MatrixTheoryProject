@@ -40,14 +40,15 @@ def test_gemm():
     M, K, N = 3, 40, 4
     A8 = T.fp8_encode(torch.randn(M, K) * 2); B8 = T.fp8_encode(torch.randn(K, N))
     seeds = torch.randint(1, 1 << 18, (M, N), dtype=torch.int64)
-    for mode in ('eager', 'lazy', 'rn'):
-        got = T.fp12_gemm_codes(A8, B8, mode=mode, seeds=seeds)
-        for i in range(M):
-            for j in range(N):
-                lf, acc = ref.GaloisLFSR(seed=int(seeds[i, j]), steps=18), 0
-                for k in range(K): acc = ref.mac(acc, int(A8[i, k]), int(B8[k, j]), lf.word() if mode != 'rn' else 0, mode)
-                assert int(got[i, j]) == acc, (mode, i, j)
-    print("  GEMM (3x40x4) bit-exact vs scalar MAC loop, modes eager/lazy/rn")
+    for r in (9, 12, 16, 18):
+        for mode in ('eager', 'lazy', 'rn'):
+            got = T.fp12_gemm_codes(A8, B8, mode=mode, seeds=seeds, r=r)
+            for i in range(M):
+                for j in range(N):
+                    lf, acc = ref.GaloisLFSR(seed=int(seeds[i, j]), steps=18), 0
+                    for k in range(K): acc = ref.mac(acc, int(A8[i, k]), int(B8[k, j]), (lf.word() & ((1 << r) - 1)) if mode != 'rn' else 0, mode, r)
+                    assert int(got[i, j]) == acc, (r, mode, i, j)
+    print("  GEMM (3x40x4) bit-exact vs scalar MAC loop, modes eager/lazy/rn, r = 9/12/16/18")
 
 def test_swamping_gemm():
     """the point of the paper: long dot product of small terms. FP32 truth vs RN vs eager SR."""

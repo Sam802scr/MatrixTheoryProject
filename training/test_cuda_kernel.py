@@ -27,11 +27,12 @@ def test_gemm():
     M, K, N = 3, 40, 4
     A8 = T.fp8_encode(torch.randn(M, K) * 2); B8 = T.fp8_encode(torch.randn(K, N))
     seeds = torch.randint(1, 1 << 18, (M, N), dtype=torch.int64)
-    for mode in ('eager', 'lazy', 'rn'):
-        got = C.gemm_codes(A8.numpy(), B8.numpy(), mode, seeds.numpy())
-        want = T.fp12_gemm_codes(A8, B8, mode=mode, seeds=seeds).numpy()
-        assert (got == want).all(), mode
-        print(f"  CUDA GEMM {mode}: bit-exact vs torch emulator (and therefore vs scalar MAC loop)")
+    for r in (9, 12, 16, 18):
+        for mode in ('eager', 'lazy', 'rn'):
+            got = C.gemm_codes(A8.numpy(), B8.numpy(), mode, seeds.numpy(), r=r)
+            want = T.fp12_gemm_codes(A8, B8, mode=mode, seeds=seeds, r=r, backend='torch').numpy()
+            assert (got == want).all(), (r, mode)
+        print(f"  CUDA GEMM r={r}: eager/lazy/rn bit-exact vs torch emulator (which is bit-exact vs scalar MAC loop)")
 
 if __name__ == "__main__":
     test_adders(); test_gemm(); print("CUDA KERNEL TESTS PASSED")

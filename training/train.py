@@ -29,6 +29,7 @@ p.add_argument('--max-batches', type=int, default=0, help='debug: stop each epoc
 p.add_argument('--synthetic', action='store_true', help='random data instead of CIFAR-10 (smoke test)')
 p.add_argument('--img', type=int, default=32, help='synthetic image size (use 8 for a fast CPU smoke test)')
 p.add_argument('--log', default='../results/accuracy.csv')
+p.add_argument('--init', default=None, help='start from the weights of an earlier checkpoint (e.g. the FP32 run) instead of random init: short fine-tuning with the emulated MAC')
 p.add_argument('--ckpt', default=None, help='checkpoint file: saved every epoch, training resumes from it if it exists (Kaggle sessions end after 9 h)')
 a = p.parse_args()
 # paper Sec. IV-A.  (resnet50 weight decay / schedule are NOT given in the paper: 1e-4 and cosine are our assumptions)
@@ -61,6 +62,8 @@ tel = torch.utils.data.DataLoader(te, 100, shuffle=False)
 
 # ---------------------------------------------------------------- model / optimiser (paper Sec. IV-A)
 model = get_model(a.model, emu).to(dev)
+if a.init:
+    model.load_state_dict(torch.load(a.init, map_location=dev)['model']); print('initialised from', a.init, flush=True)
 opt = torch.optim.SGD(model.parameters(), lr=a.lr, momentum=0.9, weight_decay=a.wd)
 sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.epochs)
 scale, good = 1024.0, 0                      # dynamic loss scaling (Micikevicius et al.), initial factor 1024

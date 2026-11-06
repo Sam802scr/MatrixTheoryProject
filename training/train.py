@@ -8,7 +8,8 @@ ResNet-20 / CIFAR-10 training with the paper's settings, FP32 baseline or emulat
   python train.py --mode eager --synthetic --img 8 --epochs 1 --batch 2 --log /tmp/a.csv   # CPU smoke test
 Paper settings: SGD m=0.9, lr 0.1, wd 1e-4, batch 128, cosine annealing, 165 epochs, dynamic loss scale init 1024.
 """
-import argparse, csv, os, time, math, torch, torch.nn as nn
+import argparse, csv, os, time, math, warnings, torch, torch.nn as nn
+warnings.filterwarnings('ignore', message='.*Grid size.*')          # harmless numba 'low occupancy' notice
 import fp12_layers as L
 from models import get_model
 
@@ -28,6 +29,7 @@ p.add_argument('--max-batches', type=int, default=0, help='debug: stop each epoc
 p.add_argument('--synthetic', action='store_true', help='random data instead of CIFAR-10 (smoke test)')
 p.add_argument('--img', type=int, default=32, help='synthetic image size (use 8 for a fast CPU smoke test)')
 p.add_argument('--log', default='../results/accuracy.csv')
+p.add_argument('--ckpt', default=None, help='checkpoint file: saved every epoch, training resumes from it if it exists (Kaggle sessions end after 9 h)')
 a = p.parse_args()
 # paper Sec. IV-A.  (resnet50 weight decay / schedule are NOT given in the paper: 1e-4 and cosine are our assumptions)
 DEF = {'resnet20': dict(epochs=165, batch=128, lr=0.1, wd=1e-4), 'vgg16': dict(epochs=200, batch=128, lr=0.01, wd=5e-4),
@@ -71,8 +73,18 @@ def evaluate():
             ok += (model(x.to(dev)).argmax(1).cpu() == y).sum().item(); n += len(y)
     model.train(); return 100.0 * ok / n
 
-acc = 0.0
-for ep in range(a.epochs):
+acc, start_ep = 0.0, 0
+if a.ckpt and os.path.exists(a.ckpt):
+    ck = torch.load(a.ckpt, map_location=dev)
+    model.load_state_dict(ck['model']); opt.load_state_dict(ck['opt']); sched.load_state_dict(ck['sched'])
+    scale, good, acc, start_ep = ck['scale'], ck['good'], ck['acc'], ck['ep']
+    print(f"resumed from {a.ckpt} at epoch {start_ep}", flush=True)
+L.MACConfig._calls = start_ep * 1_000_000                   # fresh random streams after a resume
+
+def sync():
+    if dev.type == 'cuda': torch.cuda.synchronize()
+
+for ep in range(start_ep, a.epochs):
     t0, tl, nb = time.time(), 0.0, 0
     for i, (x, y) in enumerate(trl):
         if a.max_batches and i >= a.max_batches: break
@@ -90,8 +102,13 @@ for ep in range(a.epochs):
         else:
             loss.backward(); opt.step()
         tl += loss.item(); nb += 1
-    sched.step(); acc = evaluate()
-    print(f"epoch {ep+1:3d}/{a.epochs}  loss {tl/max(nb,1):.4f}  test acc {acc:.2f}%  lr {sched.get_last_lr()[0]:.4f}  scale {scale:g}  {time.time()-t0:.0f}s", flush=True)
+    sync(); t_train = time.time() - t0
+    sched.step(); acc = evaluate(); sync()
+    print(f"epoch {ep+1:3d}/{a.epochs}  loss {tl/max(nb,1):.4f}  test acc {acc:.2f}%  lr {sched.get_last_lr()[0]:.4f}  scale {scale:g}  "
+          f"train {t_train:.0f}s ({t_train/max(nb,1):.2f} s/batch)  eval {time.time()-t0-t_train:.0f}s", flush=True)
+    if a.ckpt:
+        torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), sched=sched.state_dict(), scale=scale, good=good, acc=acc, ep=ep + 1), a.ckpt + '.tmp')
+        os.replace(a.ckpt + '.tmp', a.ckpt)
 
 os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
 new = not os.path.exists(a.log)

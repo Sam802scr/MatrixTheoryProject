@@ -61,7 +61,19 @@ def test_swamping_gemm():
     print(f"  K=4096 sum: exact={exact:.2f}  RN={rn:.2f}  eager SR mean(20 seeds)={sum(sr)/len(sr):.2f}")
     assert rn < 2 and abs(sum(sr) / len(sr) - exact) < 4
 
+def test_fmt_gemm():
+    torch.manual_seed(1)
+    A8 = T.fp8_encode(torch.randn(3, 60) * 2); B8 = T.fp8_encode(torch.randn(60, 4))
+    for fmt in ('fp16', 'bf16'):
+        got = T.fp12_gemm_codes(A8, B8, mode=fmt)
+        for i in range(3):
+            for j in range(4):
+                acc = 0
+                for k in range(60): acc = ref.mac(acc, int(A8[i, k]), int(B8[k, j]), 0, fmt)
+                assert int(got[i, j]) == acc, (fmt, i, j)
+    print("  FP16 / BF16 round-to-nearest accumulator GEMM bit-exact vs scalar MAC loop")
+
 if __name__ == "__main__":
-    for t in (test_multiplier, test_adders, test_lfsr_stream, test_gemm, test_swamping_gemm):
+    for t in (test_multiplier, test_adders, test_lfsr_stream, test_gemm, test_fmt_gemm, test_swamping_gemm):
         print(t.__name__); t()
     print("ALL TORCH EMULATOR TESTS PASSED")

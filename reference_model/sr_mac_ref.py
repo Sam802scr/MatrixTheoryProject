@@ -142,6 +142,61 @@ def lazy_equiv_rand(rand, j, r=18):
     if j == 2: return hi | ((rand & ((1 << (r - 4)) - 1)) << 2)
     return rand
 
+
+# ---------------------------------------------------------------- FP16 / BF16 round-to-nearest accumulators (baselines)
+FMTS = {'fp16': (5, 10), 'bf16': (8, 7)}          # (E, M); IEEE bias, all-ones exponent reserved, subnormals flushed, overflow saturates
+
+def _fmt_pack(E, M, s, e, m):
+    bias = (1 << (E - 1)) - 1
+    if m == 0 or e < 1 - bias: return 0
+    if e > bias: return (s << (E + M)) | (((1 << E) - 2) << M) | ((1 << M) - 1)
+    return (s << (E + M)) | ((e + bias) << M) | (m & ((1 << M) - 1))
+
+def _fmt_unpack(E, M, b):
+    bias = (1 << (E - 1)) - 1
+    s, f = (b >> (E + M)) & 1, (b >> M) & ((1 << E) - 1)
+    return (s, 1 - bias, 0) if f == 0 else (s, f - bias, (1 << M) | (b & ((1 << M) - 1)))
+
+def fmt_value(fmt, b):
+    from fractions import Fraction
+    E, M = FMTS[fmt]; bias = (1 << (E - 1)) - 1
+    s, f = (b >> (E + M)) & 1, (b >> M) & ((1 << E) - 1)
+    if f == 0: return Fraction(0)
+    v = Fraction((1 << M) | (b & ((1 << M) - 1)), 1 << M) * Fraction(2) ** (f - bias)
+    return -v if s else v
+
+def prod12_to_fmt(fmt, p):
+    """exact FP12 product -> accumulator format (saturate above the range, flush below it)"""
+    E, M = FMTS[fmt]; P_ = M + 1; bias = (1 << (E - 1)) - 1
+    s, ex, fr = (p >> 11) & 1, (p >> 5) & 63, p & 31
+    if ex == 0: return 0
+    e = (ex - 31) if ex != 63 else 10 ** 6
+    return _fmt_pack(E, M, s, min(e, bias + 1), (32 | fr) << (P_ - 6))
+
+def add_rn_fmt(fmt, acc, p12):
+    """acc in the accumulator format, p12 an exact FP12 product: nearest-even sum, result in the accumulator format"""
+    E, M = FMTS[fmt]; P_ = M + 1
+    pb = prod12_to_fmt(fmt, p12)
+    x, y = _fmt_unpack(E, M, acc), _fmt_unpack(E, M, pb)
+    if x[2] == 0 and y[2] == 0: return 0
+    if x[2] == 0: return pb
+    if y[2] == 0: return acc
+    if (x[1], x[2]) < (y[1], y[2]): x, y = y, x
+    (sx, ex, mx), (sy, ey, my) = x, y
+    d = ex - ey; Xs = mx << 3; Yf = my << 3
+    Ys = Yf >> d if d < 64 else 0
+    if d > 0 and ((Yf & ((1 << d) - 1)) if d < 64 else Yf): Ys |= 1
+    T = Xs + Ys if sx == sy else Xs - Ys
+    if T == 0: return 0
+    L = T.bit_length(); ez = ex + (L - (P_ + 3))
+    if L > P_:
+        sh = L - P_; top, rem = T >> sh, T & ((1 << sh) - 1); half = 1 << (sh - 1)
+        if rem > half or (rem == half and (top & 1)): top += 1
+    else:
+        top = T << (P_ - L)
+    if top == 1 << P_: top >>= 1; ez += 1
+    return _fmt_pack(E, M, sx, ez, top)
+
 # ---------------------------------------------------------------- LFSR / MAC
 class GaloisLFSR:
     """x^18 + x^11 + 1 (primitive). Taps/seed/steps-per-word are ASSUMPTIONS (paper gives none)."""
@@ -156,6 +211,7 @@ class GaloisLFSR:
 
 def mac(acc, a8, b8, rand, mode='eager', r=18):
     p = fp8_mul(a8, b8)
+    if mode in FMTS:    return add_rn_fmt(mode, acc, p)
     if mode == 'rn':    return add_rn(acc, p)
     if mode == 'lazy':  return add_lazy(acc, p, rand, r)
     return add_eager(acc, p, rand, r)

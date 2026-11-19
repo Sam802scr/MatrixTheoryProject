@@ -53,7 +53,7 @@ print(f"vec.hex: {n_add} adder vectors   mac_vec.hex: {N} MAC steps")
 
 
 # ---- vectors for other random-bit widths (paper sweeps r = 9, 12, 14, 16, 18)
-for rr in (9, 12, 14, 16):
+for rr in (4, 7, 9, 11, 12, 13, 14, 16):
     rg = random.Random(100 + rr)
     with open(os.path.join(OUT, f"vec_r{rr}.hex"), "w") as f:
         for _ in range(30000):

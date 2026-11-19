@@ -3,12 +3,12 @@ Fused CUDA kernel (Numba) for the emulated FP8 x FP8 -> FP12 MAC: one GPU thread
 whole K-long accumulation chain in registers (multiplier -> eager/lazy/RN adder -> LFSR step), like the paper's kernels.
 Same arithmetic as fp12_ops.py / reference_model/sr_mac_ref.py; checked bit-exact by test_cuda_kernel.py.
 Needs an NVIDIA GPU + CUDA toolkit (pip install numba-cuda[cu12]  or  conda install numba cudatoolkit).
-Mode ints: 0 = eager SR, 1 = lazy SR, 2 = RN.
+Mode ints: 0 = eager SR, 1 = lazy SR, 2 = RN (E6M5), 3 = RN FP16 accumulator, 4 = RN BF16 accumulator.
 """
 import numpy as np
 from numba import cuda
 
-MODES = {'eager': 0, 'lazy': 1, 'rn': 2}
+MODES = {'eager': 0, 'lazy': 1, 'rn': 2, 'fp16': 3, 'bf16': 4}
 P = 6
 MASK = (1 << 17) | (1 << 10)          # x^18 + x^11 + 1 (Galois)
 
@@ -68,8 +68,94 @@ def _mul(a, b):
     m = prod if top == 1 else prod << 1
     return (s << 11) | ((ea + eb + 1 + top) << 5) | (m & 31)
 
+
+@cuda.jit(device=True)
+def _fmt_pack_d(E, M, s, e, m):
+    bias = (1 << (E - 1)) - 1
+    if m == 0 or e < 1 - bias:
+        return 0
+    if e > bias:
+        return (s << (E + M)) | (((1 << E) - 2) << M) | ((1 << M) - 1)
+    return (s << (E + M)) | ((e + bias) << M) | (m & ((1 << M) - 1))
+
+@cuda.jit(device=True)
+def _add_rn_fmt(acc, p12, E, M):
+    """FP16 (E=5,M=10) / BF16 (E=8,M=7) round-to-nearest accumulator, exact FP12 product input (mirrors sr_mac_ref.add_rn_fmt)"""
+    P_ = M + 1
+    bias = (1 << (E - 1)) - 1
+    sp = (p12 >> 11) & 1
+    exp12 = (p12 >> 5) & 63
+    fr = p12 & 31
+    pb = 0
+    if exp12 != 0:
+        e = exp12 - 31
+        if exp12 == 63 or e > bias:
+            e = bias + 1
+        pb = _fmt_pack_d(E, M, sp, e, (32 | fr) << (P_ - 6))
+    sa = (acc >> (E + M)) & 1
+    fa = (acc >> M) & ((1 << E) - 1)
+    ea = fa - bias
+    ma = 0
+    if fa != 0:
+        ma = (1 << M) | (acc & ((1 << M) - 1))
+    sb = (pb >> (E + M)) & 1
+    fb = (pb >> M) & ((1 << E) - 1)
+    eb = fb - bias
+    mb = 0
+    if fb != 0:
+        mb = (1 << M) | (pb & ((1 << M) - 1))
+    if ma == 0 and mb == 0:
+        return 0
+    if ma == 0:
+        return pb
+    if mb == 0:
+        return acc
+    if ea < eb or (ea == eb and ma < mb):
+        sx = sb
+        ex = eb
+        mx = mb
+        sy = sa
+        ey = ea
+        my = ma
+    else:
+        sx = sa
+        ex = ea
+        mx = ma
+        sy = sb
+        ey = eb
+        my = mb
+    d = ex - ey
+    if d > P_ + 4:
+        d = P_ + 4
+    Yf = my << 3
+    Ys = Yf >> d
+    if d > 0 and (Yf & ((1 << d) - 1)) != 0:
+        Ys = Ys | 1
+    T = (mx << 3) - Ys if sx != sy else (mx << 3) + Ys
+    if T == 0:
+        return 0
+    bl = _bitlen(T, P_ + 4)
+    ez = ex + (bl - (P_ + 3))
+    if bl > P_:
+        sh = bl - P_
+        top = T >> sh
+        rem = T & ((1 << sh) - 1)
+        half = 1 << (sh - 1)
+        if rem > half or (rem == half and (top & 1) == 1):
+            top += 1
+    else:
+        top = T << (P_ - bl)
+    if top == (1 << P_):
+        top = top >> 1
+        ez += 1
+    return _fmt_pack_d(E, M, sx, ez, top)
+
 @cuda.jit(device=True)
 def _add(a, b, rand, mode, r):
+    if mode == 3:
+        return _add_rn_fmt(a, b, 5, 10)
+    if mode == 4:
+        return _add_rn_fmt(a, b, 8, 7)
     ea = (a >> 5) & 63
     eb = (b >> 5) & 63
     if ea == 63:
@@ -178,7 +264,7 @@ def gemm_kernel(A, B, out, seeds, M, N, K, mode, r):
         acc = np.int64(0)
         for k in range(K):
             p = _mul(np.int64(A[i, k]), np.int64(B[k, j]))
-            if mode != 2:
+            if mode < 2:
                 st = _lfsr18(st)
             acc = _add(acc, p, st & rmask, mode, r)
         out[i, j] = acc

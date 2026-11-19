@@ -8,15 +8,21 @@ ResNet-20 / CIFAR-10 training with the paper's settings, FP32 baseline or emulat
   python train.py --mode eager --synthetic --img 8 --epochs 1 --batch 2 --log /tmp/a.csv   # CPU smoke test
 Paper settings: SGD m=0.9, lr 0.1, wd 1e-4, batch 128, cosine annealing, 165 epochs, dynamic loss scale init 1024.
 """
-import argparse, csv, os, time, math, warnings, torch, torch.nn as nn
+import argparse, csv, json, os, time, math, warnings, torch, torch.nn as nn
 warnings.filterwarnings('ignore', message='.*Grid size.*')          # harmless numba 'low occupancy' notice
 import fp12_layers as L
+from policies import parse_policy
 from models import get_model
 
 p = argparse.ArgumentParser()
 p.add_argument('--model', default='resnet20', choices=['resnet20', 'vgg16', 'resnet50'])
 p.add_argument('--mode', default='fp32', choices=['fp32', 'rn', 'lazy', 'eager', 'fp16', 'bf16'])
 p.add_argument('--r', type=int, default=18)
+p.add_argument('--r-policy', default=None, help="adaptive random bits, e.g. 'phase:7,7,13' or 'k:c=3,min=4,max=13' (overrides --r); see policies.py")
+p.add_argument('--name', default=None, help='run name written to the result files')
+p.add_argument('--curve', default=None, help='CSV file for training-loss / intermediate-accuracy curves')
+p.add_argument('--log-every', type=int, default=20, help='log the mean training loss every N batches')
+p.add_argument('--eval-points', type=int, default=0, help='number of extra evaluations per epoch on the first 2000 test images')
 p.add_argument('--stream', default='lfsr', choices=['lfsr', 'ideal'])
 p.add_argument('--epochs', type=int, default=None)
 p.add_argument('--batch', type=int, default=None)
@@ -40,8 +46,10 @@ for k, v in DEF.items():
 
 torch.manual_seed(a.seed)
 emu = a.mode != 'fp32'
+name = a.name or (a.mode if not emu else f"{a.mode}_{a.r_policy or ('fixed:%d' % a.r)}")
 L.MACConfig.mode, L.MACConfig.r, L.MACConfig.stream, L.MACConfig.seed = a.mode if emu else 'eager', a.r, a.stream, a.seed * 100003
 dev = torch.device(a.device)
+if a.r_policy: L.MACConfig.policy = parse_policy(a.r_policy)
 
 # ---------------------------------------------------------------- data
 if a.model == 'resnet50' and not a.synthetic:      # Imagewoof (ImageFolder layout: <data>/train/<class>/*.JPEG and <data>/val/...)
@@ -68,13 +76,14 @@ opt = torch.optim.SGD(model.parameters(), lr=a.lr, momentum=0.9, weight_decay=a.
 sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.epochs)
 scale, good = 1024.0, 0                      # dynamic loss scaling (Micikevicius et al.), initial factor 1024
 
-def evaluate():
-    model.eval(); ok = n = 0
+def evaluate(limit=0):
+    model.eval(); ok = n = 0; L.MACConfig.count = False
     with torch.no_grad():
         for i, (x, y) in enumerate(tel):
             if a.max_batches and i >= a.max_batches: break
+            if limit and n >= limit: break
             ok += (model(x.to(dev)).argmax(1).cpu() == y).sum().item(); n += len(y)
-    model.train(); return 100.0 * ok / n
+    model.train(); L.MACConfig.count = True; return 100.0 * ok / n
 
 acc, start_ep = 0.0, 0
 if a.ckpt and os.path.exists(a.ckpt):
@@ -87,8 +96,21 @@ L.MACConfig._calls = start_ep * 1_000_000                   # fresh random strea
 def sync():
     if dev.type == 'cuda': torch.cuda.synchronize()
 
+def curve(kind, ep, it, value):
+    if not a.curve: return
+    os.makedirs(os.path.dirname(os.path.abspath(a.curve)), exist_ok=True)
+    new = not os.path.exists(a.curve)
+    with open(a.curve, 'a', newline='') as f:
+        w = csv.writer(f)
+        if new: w.writerow(['name', 'kind', 'epoch', 'iter', 'value', 'time_s'])
+        w.writerow([name, kind, ep, it, f'{value:.5f}', f'{time.time() - T0:.0f}'])
+T0 = time.time()
+
 for ep in range(start_ep, a.epochs):
     t0, tl, nb = time.time(), 0.0, 0
+    nb_total = min(len(trl), a.max_batches) if a.max_batches else len(trl)
+    eval_at = {int(nb_total * (j + 1) / (a.eval_points + 1)) for j in range(a.eval_points)}
+    win = []
     for i, (x, y) in enumerate(trl):
         if a.max_batches and i >= a.max_batches: break
         loss = nn.functional.cross_entropy(model(x.to(dev)), y.to(dev))
@@ -104,9 +126,14 @@ for ep in range(start_ep, a.epochs):
                 scale /= 2; good = 0                      # overflow: skip step, halve the scale
         else:
             loss.backward(); opt.step()
-        tl += loss.item(); nb += 1
+        tl += loss.item(); nb += 1; win.append(loss.item())
+        if a.log_every and nb % a.log_every == 0:
+            curve('train_loss', ep + 1, nb, sum(win) / len(win)); win = []
+        if nb in eval_at:
+            curve('test_acc_2k', ep + 1, nb, evaluate(2000)); model.train()
     sync(); t_train = time.time() - t0
     sched.step(); acc = evaluate(); sync()
+    curve('test_acc', ep + 1, nb, acc); curve('epoch_loss', ep + 1, nb, tl / max(nb, 1))
     print(f"epoch {ep+1:3d}/{a.epochs}  loss {tl/max(nb,1):.4f}  test acc {acc:.2f}%  lr {sched.get_last_lr()[0]:.4f}  scale {scale:g}  "
           f"train {t_train:.0f}s ({t_train/max(nb,1):.2f} s/batch)  eval {time.time()-t0-t_train:.0f}s", flush=True)
     if a.ckpt:
@@ -117,6 +144,9 @@ os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
 new = not os.path.exists(a.log)
 with open(a.log, 'a', newline='') as f:
     w = csv.writer(f)
-    if new: w.writerow(['model', 'dataset', 'mode', 'r', 'stream', 'epochs', 'batch', 'seed', 'final_test_acc'])
-    w.writerow([a.model, 'synthetic' if a.synthetic else ('imagewoof' if a.model == 'resnet50' else 'cifar10'), a.mode, a.r if emu else '-', a.stream if emu else '-', a.epochs, a.batch, a.seed, f'{acc:.2f}'])
+    if new: w.writerow(['name', 'model', 'dataset', 'mode', 'r', 'r_policy', 'stream', 'epochs', 'batch', 'lr', 'seed', 'final_test_acc'])
+    w.writerow([name, a.model, 'synthetic' if a.synthetic else ('imagewoof' if a.model == 'resnet50' else 'cifar10'), a.mode, a.r if emu else '-', a.r_policy or '-', a.stream if emu else '-', a.epochs, a.batch, a.lr, a.seed, f'{acc:.2f}'])
+if emu and L.MACConfig.stats:
+    sp = os.path.join(os.path.dirname(os.path.abspath(a.log)), f'{name}.macstats.json')
+    json.dump({'phases': {k: dict(macs=v[0], r_sum=v[1], calls=v[2], mean_r=(v[1] / v[0] if v[0] else 0)) for k, v in L.MACConfig.stats.items()}, 'hist': {f'{k[0]}:{k[1]}': v for k, v in L.MACConfig.hist.items()}}, open(sp, 'w'), indent=1)
 print("final test accuracy:", f"{acc:.2f}%")

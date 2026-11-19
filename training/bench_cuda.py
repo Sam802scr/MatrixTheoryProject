@@ -13,7 +13,7 @@ def run(M, K, N, mode='eager'):
     return dt, M * K * N / dt / 1e9
 # 1) correctness on the real GPU: kernel vs the portable torch emulator (bit-exact)
 A = T.fp8_encode(torch.randn(8, 50, device=dev)); B = T.fp8_encode(torch.randn(50, 9, device=dev)); s = torch.randint(1, 1 << 18, (8, 9), device=dev, dtype=torch.int64)
-for mode in ('eager', 'lazy', 'rn'):
+for mode in ('eager', 'lazy', 'rn', 'fp16', 'bf16'):
     ok = torch.equal(C.gemm_codes(A, B, mode, s), T.fp12_gemm_codes(A.cpu(), B.cpu(), mode=mode, seeds=s.cpu(), backend='torch').to(dev))
     print(f"real-GPU kernel vs torch emulator, {mode}: {'BIT-EXACT' if ok else 'MISMATCH'}")
 # 2) throughput on ResNet-20-like GEMM shapes at batch 128 (conv1, a mid layer, last stage)

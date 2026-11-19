@@ -22,11 +22,31 @@ def test_adders(n=3000):
         for i in range(n): assert int(out[i]) == f(A[i], B[i], Rw[i]), (name, hex(A[i]), hex(B[i]), int(out[i]), f(A[i], B[i], Rw[i]))
         print(f"  CUDA add_{name}: {n} vectors bit-exact vs reference_model")
 
+def test_fmt_adders(n=3000):
+    rng = random.Random(8)
+    for fmt, mode, (E, M) in (('fp16', 3, ref.FMTS['fp16']), ('bf16', 4, ref.FMTS['bf16'])):
+        A, B = [], []
+        for _ in range(n):
+            acc = ref._fmt_pack(E, M, rng.randrange(2), rng.randrange(-10, 12) if fmt == 'fp16' else rng.randrange(-30, 40), (1 << M) | rng.randrange(1 << M))
+            if rng.random() < .07: acc = 0
+            a8 = rng.randrange(2) << 7 | rng.randrange(1, 31) << 2 | rng.randrange(4); b8 = rng.randrange(2) << 7 | rng.randrange(1, 31) << 2 | rng.randrange(4)
+            A.append(acc); B.append(ref.fp8_mul(a8, b8))
+        a, b, rd = np.array(A, dtype=np.int32), np.array(B, dtype=np.int32), np.zeros(n, dtype=np.int32)
+        out = np.zeros(n, dtype=np.int32)
+        C.add_kernel[(n + 127) // 128, 128](a, b, rd, out, mode, 18)
+        for i in range(n): assert int(out[i]) == ref.add_rn_fmt(fmt, A[i], B[i]), (fmt, i)
+        print(f"  CUDA add_{fmt}: {n} vectors bit-exact vs reference_model")
+
 def test_gemm():
     torch.manual_seed(0)
     M, K, N = 3, 40, 4
     A8 = T.fp8_encode(torch.randn(M, K) * 2); B8 = T.fp8_encode(torch.randn(K, N))
     seeds = torch.randint(1, 1 << 18, (M, N), dtype=torch.int64)
+    for fmt in ('fp16', 'bf16'):
+        got = C.gemm_codes(A8.numpy(), B8.numpy(), fmt, seeds.numpy())
+        want = T.fp12_gemm_codes(A8, B8, mode=fmt, seeds=seeds, backend='torch').numpy()
+        assert (got == want).all(), fmt
+        print(f"  CUDA GEMM {fmt} accumulator: bit-exact vs torch emulator")
     for r in (9, 12, 16, 18):
         for mode in ('eager', 'lazy', 'rn'):
             got = C.gemm_codes(A8.numpy(), B8.numpy(), mode, seeds.numpy(), r=r)
@@ -35,4 +55,4 @@ def test_gemm():
         print(f"  CUDA GEMM r={r}: eager/lazy/rn bit-exact vs torch emulator (which is bit-exact vs scalar MAC loop)")
 
 if __name__ == "__main__":
-    test_adders(); test_gemm(); print("CUDA KERNEL TESTS PASSED")
+    test_adders(); test_fmt_adders(); test_gemm(); print("CUDA KERNEL TESTS PASSED")

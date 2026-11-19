@@ -125,7 +125,61 @@ def add_rn(a, b, rand=None, r=18):
     res = torch.where(T == 0, torch.zeros_like(res), res)
     return torch.where(spec >= 0, spec, res)
 
-ADDERS = {'eager': add_eager, 'lazy': add_lazy, 'rn': add_rn}
+# ------------------------------------------------------------------ FP16 (E5M10) / BF16 (E8M7) round-to-nearest accumulators
+def _pack_fmt(sx, ez, mz, E, M):
+    bias = (1 << (E - 1)) - 1
+    res = (sx << (E + M)) | ((ez + bias) << M) | (mz & ((1 << M) - 1))
+    sat = (sx << (E + M)) | (((1 << E) - 2) << M) | ((1 << M) - 1)
+    res = torch.where(ez > bias, sat, res)
+    return torch.where((ez < 1 - bias) | (mz == 0), torch.zeros_like(res), res)
+
+def add_rn_fmt_t(a, b12, E, M):
+    """a: accumulator codes in the (E,M) format, b12: exact FP12 products -> nearest-even sum in the (E,M) format.
+    Subnormals flushed, overflow saturates (same policy as sr_mac_ref.add_rn_fmt)."""
+    P_, bias = M + 1, (1 << (E - 1)) - 1
+    emin, emax = 1 - bias, bias
+    sa, fa = (a >> (E + M)) & 1, (a >> M) & ((1 << E) - 1)
+    ma = torch.where(fa == 0, torch.zeros_like(a), (1 << M) | (a & ((1 << M) - 1))); ea = fa - bias
+    sb, f12 = (b12 >> 11) & 1, (b12 >> 5) & 63
+    eb = torch.where(f12 == 63, torch.full_like(f12, 10 ** 6), f12 - 31)
+    mb = (32 | (b12 & 31)) << (P_ - 6)
+    over = eb > emax
+    mb = torch.where(over, torch.full_like(mb, (1 << P_) - 1), mb); eb = torch.where(over, torch.full_like(eb, emax), eb)
+    zb = (f12 == 0) | (eb < emin)
+    mb = torch.where(zb, torch.zeros_like(mb), mb)
+    za = ma == 0
+    pb = torch.where(zb, torch.zeros_like(a), _pack_fmt(sb, eb, mb, E, M))
+    swap = (ea < eb) | ((ea == eb) & (ma < mb))
+    sx, ex, mx = torch.where(swap, sb, sa), torch.where(swap, eb, ea), torch.where(swap, mb, ma)
+    sy, ey, my = torch.where(swap, sa, sb), torch.where(swap, ea, eb), torch.where(swap, ma, mb)
+    d = (ex - ey).clamp(min=0, max=P_ + 4)
+    Yf = my << 3
+    Ys = (Yf >> d) | ((Yf & ((1 << d) - 1)) != 0).to(torch.int64)
+    T = torch.where(sx == sy, (mx << 3) + Ys, (mx << 3) - Ys)
+    bl = torch.zeros_like(T)
+    for i in range(P_ + 4): bl = torch.where(((T >> i) & 1) == 1, torch.full_like(bl, i + 1), bl)
+    sh = (bl - P_).clamp(min=0)
+    top, rem = T >> sh, T & ((1 << sh) - 1)
+    half = torch.where(sh > 0, 1 << (sh - 1).clamp(min=0), torch.zeros_like(sh))
+    inc = (sh > 0) & ((rem > half) | ((rem == half) & ((top & 1) == 1)))
+    top = torch.where(sh > 0, top + inc.to(top.dtype), T << (P_ - bl).clamp(min=0))
+    ez = ex + (bl - (P_ + 3))
+    ovf = top == (1 << P_)
+    top = torch.where(ovf, torch.full_like(top, 1 << (P_ - 1)), top); ez = ez + ovf.to(ez.dtype)
+    core = torch.where(T == 0, torch.zeros_like(a), _pack_fmt(sx, ez, top, E, M))
+    return torch.where(za & (mb == 0), torch.zeros_like(a), torch.where(za, pb, torch.where(mb == 0, a, core)))
+
+def add_fp16(a, b, rand=None, r=18): return add_rn_fmt_t(a, b, 5, 10)
+def add_bf16(a, b, rand=None, r=18): return add_rn_fmt_t(a, b, 8, 7)
+
+def decode_codes(codes, mode):
+    """accumulator codes -> float32 for any mode"""
+    if mode in ('fp16', 'bf16'):
+        c = codes - 65536 * (codes >= 32768).to(codes.dtype)
+        return c.to(torch.int16).view(torch.float16 if mode == 'fp16' else torch.bfloat16).to(torch.float32)
+    return fp12_decode(codes)
+
+ADDERS = {'eager': add_eager, 'lazy': add_lazy, 'rn': add_rn, 'fp16': add_fp16, 'bf16': add_bf16}
 
 # ------------------------------------------------------------------ vectorised Galois LFSR (18 steps per word)
 class LFSRStream:
@@ -189,12 +243,12 @@ def fp12_gemm_codes(A8, B8, mode='eager', stream='lfsr', seed=1, r=18, seeds=Non
     acc = torch.zeros(M, N, dtype=torch.int64, device=dev)
     for k in range(K):
         p = fp8_mul(A8[:, k:k + 1], B8[k:k + 1, :])
-        acc = add(acc, p, (st.next() & ((1 << r) - 1)) if mode != 'rn' else None, r)     # use r random bits of the 18-bit LFSR word
+        acc = add(acc, p, (st.next() & ((1 << r) - 1)) if mode in ('eager', 'lazy') else None, r)     # use r random bits of the 18-bit LFSR word
     return acc
 
 def fp12_gemm(A, B, **kw):
     """float32 (M,K)x(K,N) -> float32 (M,N): quantise to FP8, emulated MAC, decode."""
-    return fp12_decode(fp12_gemm_codes(fp8_encode(A), fp8_encode(B), **kw))
+    return decode_codes(fp12_gemm_codes(fp8_encode(A), fp8_encode(B), **kw), kw.get('mode', 'eager'))
 
 
 # ------------------------------------------------------------------ baselines: FP16 (E5M10) / BF16 (E8M7) accumulators

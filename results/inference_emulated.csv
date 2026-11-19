@@ -1,0 +1,6 @@
+model,dataset,mode,r,n_test,acc,latency_s
+resnet20,cifar10,eager,4,10000,89.50,71
+resnet20,cifar10,eager,7,10000,89.46,73
+resnet20,cifar10,eager,9,10000,89.40,73
+resnet20,cifar10,eager,11,10000,89.31,73
+resnet20,cifar10,eager,13,10000,89.35,73

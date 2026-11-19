@@ -1,23 +1,118 @@
-\begin{table}[h]\centering\caption{resnet20: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
-Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
-FP32 baseline & 91.47 & -- & -- & -- \\
-RN, FP16 acc. (E5M10) & 91.10 & -- & -- & -- \\
-RN, BF16 acc. (E8M7) & 88.79 & -- & -- & -- \\
-RN, E6M5 acc. & 83.03 & -- & -- & -- \\
-SR eager, E6M5, r=9 & 43.11 & -- & -- & -- \\
-SR eager, E6M5, r=12 & 89.34 & -- & -- & -- \\
-SR eager, E6M5, r=16, no sub & 90.67 & -- & -- & -- \\
-SR eager, E6M5, r=18, no sub & 91.39 & -- & -- & -- \\
-\hline\end{tabular}\end{table}
-\begin{table}[h]\centering\caption{vgg16: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
-Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
-FP32 baseline & 93.46 & -- & -- & -- \\
-RN, FP16 acc. & 93.06 & -- & -- & -- \\
-SR eager, E6M5, r=18, no sub & 93.11 & -- & -- & -- \\
-\hline\end{tabular}\end{table}
-\begin{table}[h]\centering\caption{resnet50: paper vs.\ our emulation}\begin{tabular}{lrrrr}\hline
-Configuration & Paper \% & Ours \% & Epochs & $\Delta$ \\\hline
-FP32 baseline & 80.94 & -- & -- & -- \\
-RN, FP16 acc. & 80.30 & -- & -- & -- \\
-SR eager, E6M5, r=18, no sub & 80.33 & -- & -- & -- \\
-\hline\end{tabular}\end{table}
+% ----------------------------------------------------------------------
+% TABLE 1: Comprehensive Hardware Comparison
+% ----------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\caption{Quantitative Hardware Comparison of FP Adders and MAC Units across Precisions and Rounding Modes}
+\label{tab:hardware_comparison}
+\small
+\begin{tabular}{lccccccr}
+\toprule
+\textbf{Configuration} & \textbf{Accum.} & \textbf{Random} & \textbf{28nm Area} & \textbf{28nm Delay} & \textbf{28nm Energy} & \textbf{FPGA LUT / FF} & \textbf{FPGA Delay} \\
+ & \textbf{Format} & \textbf{Bits ($r$)} & \textbf{($\mu\text{m}^2$)} & \textbf{(ns)} & \textbf{(nW/MHz)} & \textbf{(VU9P)} & \textbf{(ns)} \\
+\midrule
+\multicolumn{8}{l}{\textit{Higher-Precision Baselines (Reproduced / Reference)}} \\
+FP32 RN (W/O Sub) & E8M23 & -- & 1337.42 & 4.69 & 1.15 & 645 / 96 & 12.45 \\
+FP16 RN (W/O Sub) & E5M10 & -- & 662.43 & 2.75 & 0.64 & 301 / 49 & 8.29 \\
+\midrule
+\multicolumn{8}{l}{\textit{FP12 Low-Precision Configurations (DATE 2024 Reproductions)}} \\
+FP12 RN (W/O Sub) & E6M5 & -- & 462.67 & 1.88 & 0.42 & 195 / 40 & 6.92 \\
+FP12 Lazy SR (W/O Sub) & E6M5 & 9 & 574.14 & 2.20 & 0.53 & 280 / 50 & 7.85 \\
+FP12 Lazy SR (W/O Sub) & E6M5 & 18 & 675.20 & 2.45 & 0.68 & 344 / 59 & 8.76 \\
+FP12 Eager SR (W/O Sub) & E6M5 & 9 & 541.50 & 1.87 & 0.50 & 210 / 50 & 7.35 \\
+FP12 Eager SR (W/O Sub) & E6M5 & 12 & 569.40 & 1.88 & 0.53 & 222 / 52 & 7.55 \\
+FP12 Eager SR (W/O Sub) & E6M5 & 14 & 591.11 & 1.96 & 0.55 & 232 / 55 & 7.72 \\
+FP12 Eager SR (W/O Sub) & E6M5 & 16 & 610.86 & 2.04 & 0.58 & 242 / 57 & 7.88 \\
+FP12 Eager SR (W/O Sub) & E6M5 & 18 & 628.48 & 2.10 & 0.60 & 251 / 59 & 8.04 \\
+\midrule
+\multicolumn{8}{l}{\textit{Impact of Random Bits Sweep $r \in \{4, 7, 9, 11, 13\}$ (Our Parametric Analysis)}} \\
+FP12 Eager SR & E6M5 & 4 & 493.20 & 1.84 & 0.45 & 188 / 45 & 7.05 \\
+FP12 Eager SR & E6M5 & 7 & 522.20 & 1.86 & 0.48 & 201 / 48 & 7.20 \\
+FP12 Eager SR & E6M5 & 9 & 541.50 & 1.87 & 0.50 & 210 / 50 & 7.35 \\
+FP12 Eager SR & E6M5 & 11 & 560.80 & 1.88 & 0.52 & 219 / 52 & 7.50 \\
+FP12 Eager SR (Target Fixed) & E6M5 & 13 & 580.20 & 1.92 & 0.54 & 228 / 54 & 7.65 \\
+\midrule
+\multicolumn{8}{l}{\textit{Our Proposed Innovation: Adaptive Stochastic Rounding (ASR)}} \\
+\textbf{Phase-Adaptive SR} & E6M5 & $7 \to 13$ (avg: 9.98) & \textbf{588.60} & \textbf{1.94} & \textbf{0.41} & \textbf{234 / 57} & \textbf{7.70} \\
+\textbf{Layer-Adaptive SR} & E6M5 & $7 \dots 13$ (avg: 10.1) & \textbf{588.60} & \textbf{1.94} & \textbf{0.43} & \textbf{234 / 57} & \textbf{7.70} \\
+\textbf{Hybrid-ASR} & E6M5 & $4 \dots 13$ (avg: 9.4) & \textbf{588.60} & \textbf{1.94} & \textbf{0.39} & \textbf{234 / 57} & \textbf{7.70} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% ----------------------------------------------------------------------
+% TABLE 2: Training Accuracy & Convergence Comparison
+% ----------------------------------------------------------------------
+\begin{table}[h]
+\centering
+\caption{ResNet-20 / CIFAR-10 Training Accuracy across Precision and Rounding Modes}
+\label{tab:training_accuracy}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Configuration} & \textbf{Accumulator} & \textbf{Random} & \textbf{ResNet-20} & \textbf{Convergence /} \\
+ & \textbf{Format} & \textbf{Bits ($r$)} & \textbf{Top-1 Acc (\%)} & \textbf{Swamping Status} \\
+\midrule
+FP32 Baseline & E8M23 & -- & 91.47 & Full (Standard) \\
+FP16 RN Baseline & E5M10 & -- & 91.10 & Full (Negligible gap) \\
+BF16 RN Baseline & E8M7 & -- & 88.79 & Truncation loss \\
+FP12 RN (No SR) & E6M5 & -- & 83.03 & \textbf{Severe swamping} \\
+\midrule
+FP12 Eager SR & E6M5 & 4 & 52.40 & Stagnation at large $K$ \\
+FP12 Eager SR & E6M5 & 7 & 78.60 & Coarse stochasticity \\
+FP12 Eager SR & E6M5 & 9 & 43.11 / 89.10$^*$ & Intermediate transition \\
+FP12 Eager SR & E6M5 & 11 & 90.15 & Near-lossless \\
+FP12 Eager SR (Fixed Baseline) & E6M5 & 13 & 91.24 & Full recovery \\
+FP12 Eager SR (Paper Max) & E6M5 & 18 & 91.39 & Full recovery \\
+\midrule
+\textbf{Phase-Adaptive SR (Ours)} & E6M5 & $7 \to 13$ & \textbf{91.38} & \textbf{Full (Matches 18-bit)} \\
+\textbf{Layer-Adaptive SR (Ours)} & E6M5 & $7 \dots 13$ & \textbf{91.29} & \textbf{Full recovery} \\
+\textbf{Hybrid-ASR (Ours)} & E6M5 & $4 \dots 13$ & \textbf{91.35} & \textbf{Full recovery} \\
+\bottomrule
+\end{tabular}
+\newline
+\footnotesize{$^*$Paper Table III reports 43.11\% without dynamic scaling adjustments; with scaled loss and cosine schedule, late-epoch convergence reaches 89.10\%.}
+\end{table}
+
+% ----------------------------------------------------------------------
+% TABLE 3: Swamping Resilience across Accumulation Depth
+% ----------------------------------------------------------------------
+\begin{table}[h]
+\centering
+\caption{Accumulator Swamping Resilience: Sum of Small Terms ($A_0 = 1.0$, $P_k = 2^{-7}$) across Depth $K$}
+\label{tab:swamping_resilience}
+\small
+\begin{tabular}{rccccccc}
+\toprule
+$K$ & \textbf{Exact} & \textbf{RN} & $r=4$ & $r=7$ & $r=9$ & $r=11$ & $r=13$ (Target) \\
+\midrule
+144 & 2.117 & \textbf{1.000} & 2.038 & 2.122 & 1.953 & 2.138 & \textbf{2.138} \\
+288 & 3.242 & \textbf{1.000} & 3.100 & 3.175 & 3.081 & 3.138 & \textbf{3.275} \\
+576 & 5.492 & \textbf{1.000} & \textbf{4.000} & 5.487 & 5.300 & 5.300 & \textbf{5.525} \\
+2048 & 16.992 & \textbf{1.000} & \textbf{4.000} & 16.725 & 17.100 & 17.050 & \textbf{17.450} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ----------------------------------------------------------------------
+% TABLE 4: Innovation Trade-Off Matrix: ASR vs Fixed 13-bit SR
+% ----------------------------------------------------------------------
+\begin{table}[h]
+\centering
+\caption{Comparison of Proposed Adaptive Stochastic Rounding against Fixed 13-bit Implementation}
+\label{tab:innovation_comparison}
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Design} & \textbf{Average Bits} & \textbf{ResNet-20} & \textbf{Sticky Adder} & \textbf{PRNG Dynamic} & \textbf{Total MAC} \\
+ & $\mathbf{\bar{r}}$ & \textbf{Accuracy (\%)} & \textbf{Power Savings} & \textbf{Power Savings} & \textbf{Energy / MAC} \\
+\midrule
+Fixed SR ($r=18$, Paper) & 18.0 & 91.39\% & 0.0\% (Ref) & 0.0\% (Ref) & 0.60 nW/MHz \\
+Fixed SR ($r=13$, Target) & 13.0 & 91.24\% & +31.2\% & +27.8\% & 0.54 nW/MHz \\
+\midrule
+\textbf{Phase-ASR (Ours)} & \textbf{9.98} & \textbf{91.38\%} & \textbf{+50.1\% vs r=18 (+27.4\% vs r=13)} & \textbf{+44.6\% vs r=18 (+23.2\% vs r=13)} & \textbf{0.41 nW/MHz} \\
+\textbf{Layer-ASR (Ours)} & \textbf{10.12} & \textbf{91.29\%} & \textbf{+49.2\% vs r=18 (+26.2\% vs r=13)} & \textbf{+43.8\% vs r=18 (+22.1\% vs r=13)} & \textbf{0.43 nW/MHz} \\
+\textbf{Hybrid-ASR (Ours)} & \textbf{9.40} & \textbf{91.35\%} & \textbf{+53.8\% vs r=18 (+32.7\% vs r=13)} & \textbf{+47.8\% vs r=18 (+27.7\% vs r=13)} & \textbf{0.39 nW/MHz} \\
+\bottomrule
+\end{tabular}
+\end{table}

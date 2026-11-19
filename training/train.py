@@ -1,24 +1,30 @@
 """
-ResNet-20 / CIFAR-10 training with the paper's settings, FP32 baseline or emulated FP8->FP12 MAC.
+ResNet-20 / CIFAR-10 training with the paper's settings, FP32 baseline, emulated FP8->FP12 MAC,
+and Proposed Innovation: Adaptive Stochastic Rounding (Phase / Layer / Hybrid ASR).
   python train.py --mode fp32                       # baseline (paper: 91.47 %)
   python train.py --mode eager --r 18               # paper's design (paper: 91.39 %)
-  python train.py --mode eager --r 9 --epochs 165   # r sweep (paper Table III)
-  python train.py --model vgg16 --mode eager        # VGG-16 / CIFAR-10   (paper: 93.11 % vs 93.46 % FP32)
-  python train.py --model resnet50 --mode eager --data D:/imagewoof2   # ResNet-50 / Imagewoof (paper: 80.33 % vs 80.94 %)
-  python train.py --mode eager --synthetic --img 8 --epochs 1 --batch 2 --log /tmp/a.csv   # CPU smoke test
-Paper settings: SGD m=0.9, lr 0.1, wd 1e-4, batch 128, cosine annealing, 165 epochs, dynamic loss scale init 1024.
+  python train.py --mode eager --r 13               # 13-bit baseline (prof requirement)
+  python train.py --mode adaptive_phase             # Proposed Innovation: Phase-Adaptive SR (r: 7 -> 13)
+  python train.py --mode adaptive_layer             # Proposed Innovation: Layer-Adaptive SR
+  python train.py --mode adaptive_hybrid            # Proposed Innovation: Hybrid-Adaptive SR
+  python train.py --mode eager --r-policy phase:7,7,13 # extension suite policy
 """
 import argparse, csv, json, os, time, math, warnings, torch, torch.nn as nn
-warnings.filterwarnings('ignore', message='.*Grid size.*')          # harmless numba 'low occupancy' notice
+warnings.filterwarnings('ignore', message='.*Grid size.*')
 import fp12_layers as L
 from policies import parse_policy
+from adaptive_sr import AdaptiveSRController
 from models import get_model
 
 p = argparse.ArgumentParser()
 p.add_argument('--model', default='resnet20', choices=['resnet20', 'vgg16', 'resnet50'])
-p.add_argument('--mode', default='fp32', choices=['fp32', 'rn', 'lazy', 'eager', 'fp16', 'bf16'])
+p.add_argument('--mode', default='fp32', choices=['fp32', 'rn', 'lazy', 'eager', 'fp16', 'bf16',
+                                                  'adaptive_phase', 'adaptive_layer', 'adaptive_hybrid'])
 p.add_argument('--r', type=int, default=18)
 p.add_argument('--r-policy', default=None, help="adaptive random bits, e.g. 'phase:7,7,13' or 'k:c=3,min=4,max=13' (overrides --r); see policies.py")
+p.add_argument('--r-min', type=int, default=7, help='minimum random bits for adaptive SR')
+p.add_argument('--r-max', type=int, default=13, help='maximum random bits for adaptive SR')
+p.add_argument('--schedule', default='cosine', choices=['cosine', 'step', 'linear'])
 p.add_argument('--name', default=None, help='run name written to the result files')
 p.add_argument('--curve', default=None, help='CSV file for training-loss / intermediate-accuracy curves')
 p.add_argument('--log-every', type=int, default=20, help='log the mean training loss every N batches')
@@ -35,11 +41,12 @@ p.add_argument('--max-batches', type=int, default=0, help='debug: stop each epoc
 p.add_argument('--synthetic', action='store_true', help='random data instead of CIFAR-10 (smoke test)')
 p.add_argument('--img', type=int, default=32, help='synthetic image size (use 8 for a fast CPU smoke test)')
 p.add_argument('--log', default='../results/accuracy.csv')
-p.add_argument('--init', default=None, help='start from the weights of an earlier checkpoint (e.g. the FP32 run) instead of random init: short fine-tuning with the emulated MAC')
-p.add_argument('--ckpt', default=None, help='checkpoint file: saved every epoch, training resumes from it if it exists (Kaggle sessions end after 9 h)')
+p.add_argument('--init', default=None, help='start from the weights of an earlier checkpoint')
+p.add_argument('--ckpt', default=None, help='checkpoint file')
 a = p.parse_args()
-# paper Sec. IV-A.  (resnet50 weight decay / schedule are NOT given in the paper: 1e-4 and cosine are our assumptions)
-DEF = {'resnet20': dict(epochs=165, batch=128, lr=0.1, wd=1e-4), 'vgg16': dict(epochs=200, batch=128, lr=0.01, wd=5e-4),
+
+DEF = {'resnet20': dict(epochs=165, batch=128, lr=0.1, wd=1e-4),
+       'vgg16': dict(epochs=200, batch=128, lr=0.01, wd=5e-4),
        'resnet50': dict(epochs=100, batch=16, lr=0.01, wd=1e-4)}[a.model]
 for k, v in DEF.items():
     if getattr(a, k) is None: setattr(a, k, v)
@@ -47,14 +54,28 @@ for k, v in DEF.items():
 torch.manual_seed(a.seed)
 emu = a.mode != 'fp32'
 name = a.name or (a.mode if not emu else f"{a.mode}_{a.r_policy or ('fixed:%d' % a.r)}")
-L.MACConfig.mode, L.MACConfig.r, L.MACConfig.stream, L.MACConfig.seed = a.mode if emu else 'eager', a.r, a.stream, a.seed * 100003
+
+if a.mode.startswith('adaptive_'):
+    policy_name = a.mode.replace('adaptive_', '')
+    L.MACConfig.controller = AdaptiveSRController(policy=policy_name, r_min=a.r_min, r_max=a.r_max,
+                                                  total_epochs=a.epochs, schedule=a.schedule)
+    L.MACConfig.mode = 'eager'
+    L.MACConfig.r = a.r_max
+else:
+    L.MACConfig.controller = None
+    L.MACConfig.mode = a.mode if emu else 'eager'
+    L.MACConfig.r = a.r
+
+L.MACConfig.stream, L.MACConfig.seed = a.stream, a.seed * 100003
+if a.r_policy:
+    L.MACConfig.policy = parse_policy(a.r_policy)
+
 dev = torch.device(a.device)
-if a.r_policy: L.MACConfig.policy = parse_policy(a.r_policy)
 
 # ---------------------------------------------------------------- data
-if a.model == 'resnet50' and not a.synthetic:      # Imagewoof (ImageFolder layout: <data>/train/<class>/*.JPEG and <data>/val/...)
+if a.model == 'resnet50' and not a.synthetic:
     import torchvision, torchvision.transforms as Tf
-    norm = Tf.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))     # resolution/augmentation: ASSUMED (paper silent)
+    norm = Tf.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     tr = torchvision.datasets.ImageFolder(os.path.join(a.data, 'train'), Tf.Compose([Tf.RandomResizedCrop(224), Tf.RandomHorizontalFlip(), Tf.ToTensor(), norm]))
     te = torchvision.datasets.ImageFolder(os.path.join(a.data, 'val'), Tf.Compose([Tf.Resize(256), Tf.CenterCrop(224), Tf.ToTensor(), norm]))
 elif a.synthetic:
@@ -68,13 +89,13 @@ else:
 trl = torch.utils.data.DataLoader(tr, a.batch, shuffle=True, drop_last=True, num_workers=0 if a.synthetic else 2)
 tel = torch.utils.data.DataLoader(te, 100, shuffle=False)
 
-# ---------------------------------------------------------------- model / optimiser (paper Sec. IV-A)
+# ---------------------------------------------------------------- model / optimiser
 model = get_model(a.model, emu).to(dev)
 if a.init:
     model.load_state_dict(torch.load(a.init, map_location=dev)['model']); print('initialised from', a.init, flush=True)
 opt = torch.optim.SGD(model.parameters(), lr=a.lr, momentum=0.9, weight_decay=a.wd)
 sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=a.epochs)
-scale, good = 1024.0, 0                      # dynamic loss scaling (Micikevicius et al.), initial factor 1024
+scale, good = 1024.0, 0
 
 def evaluate(limit=0):
     model.eval(); ok = n = 0; L.MACConfig.count = False
@@ -91,7 +112,7 @@ if a.ckpt and os.path.exists(a.ckpt):
     model.load_state_dict(ck['model']); opt.load_state_dict(ck['opt']); sched.load_state_dict(ck['sched'])
     scale, good, acc, start_ep = ck['scale'], ck['good'], ck['acc'], ck['ep']
     print(f"resumed from {a.ckpt} at epoch {start_ep}", flush=True)
-L.MACConfig._calls = start_ep * 1_000_000                   # fresh random streams after a resume
+L.MACConfig._calls = start_ep * 1_000_000
 
 def sync():
     if dev.type == 'cuda': torch.cuda.synchronize()
@@ -106,7 +127,19 @@ def curve(kind, ep, it, value):
         w.writerow([name, kind, ep, it, f'{value:.5f}', f'{time.time() - T0:.0f}'])
 T0 = time.time()
 
+print(f"Starting training: model={a.model}, mode={a.mode}, epochs={a.epochs}, device={a.device}", flush=True)
+if L.MACConfig.controller is not None:
+    en_info = L.MACConfig.controller.compute_energy_metrics()
+    print(f"Adaptive SR initialized: policy={L.MACConfig.controller.policy}, schedule={a.schedule}, "
+          f"avg_r={en_info['avg_r']:.2f}, sticky energy savings vs r=13: {en_info['sticky_power_savings_vs_fixed13_pct']:.1f}%", flush=True)
+
 for ep in range(start_ep, a.epochs):
+    if L.MACConfig.controller is not None:
+        L.MACConfig.controller.set_epoch(ep)
+        current_r_val = L.MACConfig.controller.get_phase_r(ep)
+    else:
+        current_r_val = L.MACConfig.r
+
     t0, tl, nb = time.time(), 0.0, 0
     nb_total = min(len(trl), a.max_batches) if a.max_batches else len(trl)
     eval_at = {int(nb_total * (j + 1) / (a.eval_points + 1)) for j in range(a.eval_points)}
@@ -123,7 +156,7 @@ for ep in range(start_ep, a.epochs):
                 opt.step(); good += 1
                 if good % 2000 == 0: scale *= 2
             else:
-                scale /= 2; good = 0                      # overflow: skip step, halve the scale
+                scale /= 2; good = 0
         else:
             loss.backward(); opt.step()
         tl += loss.item(); nb += 1; win.append(loss.item())
@@ -134,7 +167,7 @@ for ep in range(start_ep, a.epochs):
     sync(); t_train = time.time() - t0
     sched.step(); acc = evaluate(); sync()
     curve('test_acc', ep + 1, nb, acc); curve('epoch_loss', ep + 1, nb, tl / max(nb, 1))
-    print(f"epoch {ep+1:3d}/{a.epochs}  loss {tl/max(nb,1):.4f}  test acc {acc:.2f}%  lr {sched.get_last_lr()[0]:.4f}  scale {scale:g}  "
+    print(f"epoch {ep+1:3d}/{a.epochs}  loss {tl/max(nb,1):.4f}  test acc {acc:.2f}%  r={current_r_val}  lr {sched.get_last_lr()[0]:.4f}  scale {scale:g}  "
           f"train {t_train:.0f}s ({t_train/max(nb,1):.2f} s/batch)  eval {time.time()-t0-t_train:.0f}s", flush=True)
     if a.ckpt:
         torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), sched=sched.state_dict(), scale=scale, good=good, acc=acc, ep=ep + 1), a.ckpt + '.tmp')
@@ -145,8 +178,11 @@ new = not os.path.exists(a.log)
 with open(a.log, 'a', newline='') as f:
     w = csv.writer(f)
     if new: w.writerow(['name', 'model', 'dataset', 'mode', 'r', 'r_policy', 'stream', 'epochs', 'batch', 'lr', 'seed', 'final_test_acc'])
-    w.writerow([name, a.model, 'synthetic' if a.synthetic else ('imagewoof' if a.model == 'resnet50' else 'cifar10'), a.mode, a.r if emu else '-', a.r_policy or '-', a.stream if emu else '-', a.epochs, a.batch, a.lr, a.seed, f'{acc:.2f}'])
+    r_logged = f"adapt({current_r_val})" if a.mode.startswith('adaptive_') else (a.r if emu else '-')
+    w.writerow([name, a.model, 'synthetic' if a.synthetic else ('imagewoof' if a.model == 'resnet50' else 'cifar10'),
+                a.mode, r_logged, a.r_policy or '-', a.stream if emu else '-', a.epochs, a.batch, a.lr, a.seed, f'{acc:.2f}'])
 if emu and L.MACConfig.stats:
     sp = os.path.join(os.path.dirname(os.path.abspath(a.log)), f'{name}.macstats.json')
-    json.dump({'phases': {k: dict(macs=v[0], r_sum=v[1], calls=v[2], mean_r=(v[1] / v[0] if v[0] else 0)) for k, v in L.MACConfig.stats.items()}, 'hist': {f'{k[0]}:{k[1]}': v for k, v in L.MACConfig.hist.items()}}, open(sp, 'w'), indent=1)
+    json.dump({'phases': {k: dict(macs=v[0], r_sum=v[1], calls=v[2], mean_r=(v[1] / v[0] if v[0] else 0)) for k, v in L.MACConfig.stats.items()},
+               'hist': {f'{k[0]}:{k[1]}': v for k, v in L.MACConfig.hist.items()}}, open(sp, 'w'), indent=1)
 print("final test accuracy:", f"{acc:.2f}%")

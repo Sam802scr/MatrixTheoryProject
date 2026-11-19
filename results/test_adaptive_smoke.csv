@@ -1,0 +1,2 @@
+model,dataset,mode,r,stream,epochs,batch,seed,final_test_acc
+resnet20,synthetic,adaptive_phase,adapt(10),lfsr,2,2,0,0.00

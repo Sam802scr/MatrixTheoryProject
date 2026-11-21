@@ -66,6 +66,13 @@ The baseline DATE 2024 architecture comprises:
     \item \textbf{Galois LFSR PRNG}: Generated using polynomial $x^{18} + x^{11} + 1$, delivering fresh pseudo-random sequences for stochastic rounding.
 \end{enumerate}
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig1_adder_architectures.png}
+\caption{Architectural Block Diagrams: (a) Lazy Stochastic Rounding with critical path serialization; (b) DATE 2024 Eager Stochastic Rounding with speculative parallel sticky addition; and (c) Our Proposed Adaptive Stochastic Rounding (ASR) architecture featuring MSB-aligned dynamic operand gating.}
+\label{fig:architectures}
+\end{figure*}
+
 \subsection{Functional Verification Summary}
 \begin{itemize}
     \item \textbf{Multiplier Verification}: Exhaustive test of all 65,536 FP8 pairs against the Python reference model (zero mismatches).
@@ -89,6 +96,13 @@ The quantitative data confirms that \textbf{Eager SR achieves lower area and sig
     \item \textbf{Minimal Correction Overhead}: The normalizer only shifts the top $P+2$ bits. Any 1-bit or 2-bit shift in the far path is compensated by the tiny 2-bit \textit{Round Correction} logic. On Nangate 45\,nm, Eager SR reduces delay by $11.3\%$ and cell area by $3.1\%$ relative to Lazy SR at $r=18$. On FPGA (VU9P), Eager SR consumes \textbf{27.0\% fewer LUTs} (251 vs.\ 344) and is \textbf{8.2\% faster} (8.04\,ns vs.\ 8.76\,ns).
 \end{itemize}
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig2_hardware_scaling.png}
+\caption{Quantitative Hardware Scaling across Random Bit Width $r \in \{4, 7, 9, 11, 13, 18\}$: (a) 28nm ASIC Area, (b) Critical Path Delay, (c) FPGA LUTs on Virtex UltraScale+ VU9P, and (d) Dynamic Energy showing the Phase-ASR operating point.}
+\label{fig:hardware_scaling}
+\end{figure*}
+
 % ======================================================================
 \section{Part III: Random Bit-Width Sensitivity Analysis ($r \in \{4, 7, 9, 11, 13\}$)}
 % ======================================================================
@@ -111,6 +125,13 @@ Table~\ref{tab:swamping_resilience} documents our experimental evaluation of acc
     \item \textbf{$r=11$ and $r=13$}: Fully resolve fine gradient updates. At $r=13$, ResNet-20 accuracy reaches \textbf{91.24\%}, matching the paper's 18-bit performance ($91.39\%$) within statistical variance ($< 0.15\%$). This establishes that \textbf{$r=13$ is the critical saturation point} where extra random bits yield diminishing algorithmic returns.
 \end{itemize}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/fig3_swamping_depth.png}
+\caption{Accumulator Swamping Resilience: Repeated addition of small gradient terms ($A_0 = 1.0, \Delta = 2^{-7}$) across accumulation depth $K \in \{144, 288, 576, 2048\}$. Round-to-Nearest freezes at $1.0$, $r=4$ caps at $4.0$, while $r=13$ converges accurately to the exact mathematical sum.}
+\label{fig:swamping_depth}
+\end{figure}
+
 \subsection{Emulated Post-Training Inference Sensitivity}
 To isolate the impact of accumulator stochasticity during inference versus training, we evaluated pre-trained ResNet-20 weights on the complete CIFAR-10 test set ($N=10{,}000$) where every convolutional and linear layer accumulated with the emulated FP12 Eager SR MAC across $r \in \{4, 7, 9, 11, 13\}$:
 \begin{itemize}
@@ -121,6 +142,13 @@ To isolate the impact of accumulator stochasticity during inference versus train
     \item \textbf{$r = 13$}: $89.35\%$ test accuracy (forward pass latency: 73\,s)
 \end{itemize}
 This highlights a crucial fundamental asymmetry: while training from scratch strictly requires $r \ge 13$ to resolve tiny iterative gradient accumulations and prevent swamping, inference is remarkably resilient down to $r = 4$. Forward activations do not undergo iterative summation of vanishingly small terms, meaning deployed hardware can aggressively downscale PRNG bit-widths to $r = 4$ during pure inference to minimize power consumption.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig4_training_convergence.png}
+\caption{Training Convergence on ResNet-20 / CIFAR-10: (a) Full 165-epoch convergence trajectory comparing FP32, FP12 Eager SR ($r=18$), Phase-ASR, and FP12 RN swamping stagnation; (b) Early-epoch convergence speed from fresh initialization experimentally measured in our emulation framework.}
+\label{fig:convergence}
+\end{figure*}
 
 % ======================================================================
 \section{Part IV: Proposed Innovation — Adaptive Stochastic Rounding (ASR)}
@@ -149,6 +177,13 @@ As reported in Table~\ref{tab:innovation_comparison}:
     \item \textbf{Energy Savings}: Phase-ASR achieves a \textbf{27.4\% reduction in sticky-adder dynamic power} and a \textbf{23.2\% reduction in PRNG energy} compared to fixed $r=13$ (and over \textbf{50\% reduction} compared to fixed $r=18$).
     \item \textbf{Hardware Verification}: All 25,000 test vectors simulated in Icarus Verilog across all modes passed with \textbf{zero mismatches}.
 \end{itemize}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig5_adaptive_power_tradeoff.png}
+\caption{Adaptive Stochastic Rounding (ASR) Innovation: (a) Cosine annealing precision schedule $r(t): 7 \to 13$ resulting in average active bit width $\bar{r}=9.98$; (b) Normalized dynamic power dissipation comparison showing $27.4\%$ to $32.7\%$ dynamic power savings over fixed 13-bit SR and $>50\%$ savings over fixed 18-bit SR.}
+\label{fig:adaptive_power}
+\end{figure*}
 
 % ======================================================================
 \section{Clear Demarcation: Reproduced vs.\ Proposed Contributions}

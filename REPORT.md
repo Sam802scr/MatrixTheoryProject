@@ -2,8 +2,8 @@
 **Beyond DATE 2024: Quantitative Comparison, Bit-Width Sensitivity, and Hardware-Efficient Adaptive SR**
 
 * **Course Project Final Report**
-* **Project Team:** Group 1
-* **Course Faculty / Advisor:** Prof. Zafar
+* **Project Members:** Samagna Potham (EE26MTECH14010), Harsha Sri Akkamgari (EE26MTECH14003)
+* **Faculty Advisor:** Prof. Zafar
 * **Repository:** [https://github.com/Sam802scr/MatrixTheoryProject](https://github.com/Sam802scr/MatrixTheoryProject)
 * **Date:** November 2026
 

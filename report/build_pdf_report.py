@@ -39,10 +39,10 @@ class NumberedCanvas(canvas.Canvas):
         if self._pageNumber > 1:
             self.setFont('Helvetica-Bold', 8)
             self.setFillColor(colors.HexColor('#1E3A8A'))
-            self.drawString(36, 756, 'Adaptive Stochastic Rounding for Low-Precision FP MAC | Group 1')
+            self.drawString(36, 756, 'Adaptive Stochastic Rounding for Low-Precision FP MAC')
             self.setFont('Helvetica', 8)
             self.setFillColor(colors.HexColor('#6B7280'))
-            self.drawRightString(576, 756, 'Course Project Final Report')
+            self.drawRightString(576, 756, 'Samagna Potham & Harsha Sri Akkamgari')
             self.setStrokeColor(colors.HexColor('#CBD5E1'))
             self.setLineWidth(0.75)
             self.line(36, 750, 576, 750)
@@ -53,7 +53,7 @@ class NumberedCanvas(canvas.Canvas):
         self.line(36, 42, 576, 42)
         self.setFont('Helvetica', 8)
         self.setFillColor(colors.HexColor('#6B7280'))
-        self.drawString(36, 30, 'Confidential — Prepared for Faculty Review (Prof. Zafar)')
+        self.drawString(36, 30, 'Course Project Report — Prepared for Prof. Zafar')
         page_text = f"Page {self._pageNumber} of {page_count}"
         self.drawRightString(576, 30, page_text)
         self.restoreState()
@@ -172,7 +172,7 @@ def build_pdf():
     # Title block
     story.append(Paragraph("Adaptive Stochastic Rounding for Low-Precision Floating-Point MAC Architectures in DNN Training", title_style))
     story.append(Paragraph("Beyond DATE 2024: Quantitative Comparison, Bit-Width Sensitivity, and Hardware-Efficient Adaptive SR", subtitle_style))
-    story.append(Paragraph("<b>Group 1</b> &nbsp;|&nbsp; Course Project Final Report &nbsp;|&nbsp; Guided by <b>Prof. Zafar</b> &nbsp;|&nbsp; Date: November 2026", author_style))
+    story.append(Paragraph("<b>Samagna Potham</b> (EE26MTECH14010) &nbsp;&bull;&nbsp; <b>Harsha Sri Akkamgari</b> (EE26MTECH14003)<br/>Guided by <b>Prof. Zafar</b> &nbsp;|&nbsp; November 2026", author_style))
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#2563EB'), spaceAfter=10))
 
     # Executive Abstract Callout Box

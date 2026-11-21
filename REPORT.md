@@ -24,18 +24,28 @@ Addressing the faculty review guidelines, this report presents three primary res
 
 ## 1. Theoretical Background and The Gradient Swamping Problem
 
-### 1.1 Floating-Point Accumulation in DNN Training
+### 1.1 Floating-Point Representations in DNN Training
 In modern DNN training, matrix multiplications (GEMM) in forward and backward passes rely on multiply-accumulate (MAC) units:
 $$acc_k = acc_{k-1} + a_k \cdot b_k$$
 While 8-bit floating-point formats (e.g., FP8 E5M2) are ideal for multiplicands $a_k$ and $b_k$, accumulation into low-precision accumulators introduces severe numerical instability.
 
-### 1.2 The Gradient Swamping Trap
+| Format | Sign ($s$) | Exponent ($e$) | Mantissa ($m$) | Bias | Dynamic Range ($V_{\min}, V_{\max}$) | Machine Epsilon ($\epsilon = 2^{-M}$) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **FP32 (Single)** | 1 | 8 | 23 | 127 | $\approx 1.18 \times 10^{-38} \text{ to } 3.40 \times 10^{38}$ | $2^{-23} \approx 1.19 \times 10^{-7}$ |
+| **FP16 (Half)** | 1 | 5 | 10 | 15 | $\approx 6.10 \times 10^{-5} \text{ to } 65,504$ | $2^{-10} \approx 9.77 \times 10^{-4}$ |
+| **BF16 (Brain)** | 1 | 8 | 7 | 127 | $\approx 1.18 \times 10^{-38} \text{ to } 3.40 \times 10^{38}$ | $2^{-7} \approx 7.81 \times 10^{-3}$ |
+| **FP12 (Accumulator)** | 1 | 6 | 5 | 31 | **$\approx 4.66 \times 10^{-10} \text{ to } 4.29 \times 10^9$** | **$2^{-5} = 0.03125 \ (1/32)$** |
+| **FP8 E5M2 (Multiplier)** | 1 | 5 | 2 | 15 | $\approx 6.10 \times 10^{-5} \text{ to } 57,344$ | $2^{-2} = 0.25 \ (1/4)$ |
+
+*Table 1: Architectural specifications and dynamic ranges of floating-point representations.*
+
+### 1.2 The Gradient Swamping Mechanism
 When accumulating thousands of product terms, the accumulator $acc$ grows significantly larger than individual incoming gradient updates $\Delta$. In an FP12 (E6M5) accumulator with significand precision $P = 6$ (including the implicit leading bit):
 * An exponent distance $d = e_{acc} - e_{prod}$ arises.
 * When $d > P = 6$, the shifted significand falls completely below the accumulator's least significant bit (LSB).
 * Under standard **Round-to-Nearest-Even (RN)**, if the discarded fraction is less than half an ULP ($< 2^{-1}$ ULP), it is systematically truncated to zero:
 $$\text{RN}(acc + \Delta) = acc, \quad \forall \Delta < 2^{e_{acc} - 6}$$
-* Consequently, millions of fine updates are discarded. The network exhibits weight stagnation, plateauing at ~83% accuracy on ResNet-20.
+* Consequently, millions of fine-grained gradient updates are discarded. The network exhibits weight stagnation, plateauing at ~83% accuracy on ResNet-20.
 
 ### 1.3 Stochastic Rounding Unbiased Expectation
 Stochastic Rounding maps an intermediate real value $x \in [\lfloor x \rfloor, \lceil x \rceil]$ probabilistically:
@@ -54,7 +64,7 @@ The baseline architecture comprises:
 2. **FP12 RN Adder:** Deterministic round-to-nearest dual-path baseline.
 3. **FP12 Lazy SR Adder:** Computes full addition and leading-zero detection (LZD) normalization before adding the $r$-bit random vector.
 4. **FP12 Eager SR Adder:** Splits rounding into a **Sticky Round** unit (adding $r-2$ random bits speculatively in parallel with the main adder) and a 2-bit **Round Correction** unit after normalization.
-5. **Galois LFSR PRNG:** 18-bit PRNG utilizing polynomial $x^{18} + x^{11} + 1$.
+5. **Galois LFSR PRNG:** 18-bit PRNG utilizing polynomial $x^{18} + x^{11} + 1$ and feedback mask `18'h20400`.
 
 ![Figure 1: Architectural Comparison](report/figures/fig1_adder_architectures.png)
 *Figure 1: Architectural comparison of FP12 adders: (a) Lazy SR with serial critical path bottleneck; (b) DATE 2024 Eager SR with speculative parallel sticky addition; and (c) Our Proposed Adaptive SR (ASR) architecture featuring MSB-aligned dynamic operand gating.*
@@ -69,7 +79,7 @@ The baseline architecture comprises:
 ## 3. Quantitative Hardware Comparison (RN vs. Lazy vs. Eager)
 
 ### 3.1 Multi-Platform Hardware Metrics
-Table 1 summarizes the synthesis results across 28nm FDSOI ASIC, Virtex UltraScale+ (VU9P) FPGA, and Nangate 45nm standard cell flows.
+Table 2 summarizes the synthesis results across 28nm FDSOI ASIC, Virtex UltraScale+ (VU9P) FPGA, and Nangate 45nm standard cell flows.
 
 | Configuration | Accum. Format | Random Bits ($r$) | 28nm Area ($\mu\text{m}^2$) | 28nm Delay (ns) | 28nm Energy (nW/MHz) | FPGA LUT / FF (VU9P) | FPGA Delay (ns) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -83,6 +93,8 @@ Table 1 summarizes the synthesis results across 28nm FDSOI ASIC, Virtex UltraSca
 | **FP12 Eager SR** | E6M5 | 13 | 580.20 | 1.92 | 0.54 | 228 / 54 | 7.65 |
 | **FP12 Eager SR (Paper)** | E6M5 | 18 | 628.48 | 2.10 | 0.60 | 251 / 59 | 8.04 |
 | **Phase-ASR (Ours)** | E6M5 | $7 \to 13$ | **588.60** | **1.94** | **0.41** | **234 / 57** | **7.70** |
+
+*Table 2: Multi-Platform Quantitative Hardware Comparison across Precisions and Rounding Modes.*
 
 ![Figure 2: Hardware Complexity Scaling](report/figures/fig2_hardware_scaling.png)
 *Figure 2: Quantitative hardware scaling across random bit width $r \in \{4, 7, 9, 11, 13, 18\}$: (a) 28nm ASIC Area; (b) Critical Path Delay; (c) FPGA LUTs on VU9P; and (d) Dynamic Energy showing the Phase-ASR operating point.*
@@ -109,7 +121,20 @@ We evaluated the accumulation of small terms ($A_0 = 1.0, \Delta = 2^{-7}$) acro
 ![Figure 3: Swamping Resilience](report/figures/fig3_swamping_depth.png)
 *Figure 3: Accumulator swamping resilience across accumulation depth $K$. Round-to-Nearest freezes at 1.000; $r=4$ caps at 4.000; while $r=13$ converges accurately to the exact mathematical sum (17.45 vs 16.99).*
 
-### 4.2 Training Convergence vs. Test-Time Inference
+### 4.2 Layer-by-Layer Accumulation Depth Matrix (ResNet-20)
+To justify layer-adaptive precision allocation, we analyzed the reduction dimension $K = C_{\text{in}} \cdot k_h \cdot k_w$ throughout ResNet-20:
+
+| Layer Name | Filter Size | Input Channels ($C_{\text{in}}$) | Reduction Depth ($K$) | Swamping Risk | Optimal $r$ Allocation |
+| :--- | :---: | :---: | :---: | :--- | :---: |
+| **conv1 (Input Stage)** | $3 \times 3$ | 3 | **$K = 27$** | Very Low (Short depth) | **$r = 7$** (Low Complexity) |
+| **layer1 (3 Residual Blocks)** | $3 \times 3$ | 16 | **$K = 144$** | Moderate | **$r = 9$** |
+| **layer2 (3 Residual Blocks)** | $3 \times 3$ | 32 | **$K = 288$** | Elevated | **$r = 11$** |
+| **layer3 (3 Residual Blocks)** | $3 \times 3$ | 64 | **$K = 576$** | High (Severe swamping risk) | **$r = 13$** (High Precision) |
+| **fc (Linear Classifier)** | $1 \times 1$ | 64 | **$K = 64$** | Low | **$r = 9$** |
+
+*Table 3: ResNet-20 layer accumulation depth matrix demonstrating heterogeneous swamping sensitivity.*
+
+### 4.3 Training Convergence vs. Test-Time Inference
 * **Training from Scratch:** $r=4$ caps out at **52.40%** accuracy due to premature swamping. At $r=13$, training accuracy saturates at **91.24%**, matching the paper's 18-bit result ($91.39\%$). This proves **$r=13$ is the critical fixed saturation point**.
 * **Inference Sensitivity (Empirical Kaggle Evaluation):** When pre-trained weights are evaluated during test-time inference on 10,000 CIFAR-10 images:
   * $r=4$: **89.50%** (71s latency)
@@ -136,7 +161,7 @@ In `fp12_add_sr_adaptive.v`:
 * Sized for $R_{\max} = 13$ (11-bit carry chain).
 * **MSB-Aligned Embedding:** The fractional bits of the shifted operand and PRNG bits are aligned to the MSB.
 * **Operand Gating:** The inactive lower $(11-k)$ bits are masked to 0 via a 3-bit control signal `r_sel`.
-* **Zero Toggle Power:** Because inputs to the lower carry chain bits are tied to constant zero, their switching activity factor drops to zero ($\alpha = 0$). Dynamic power ($P = \alpha C V^2 f$) in the unneeded adder slices and LFSR stages is eliminated.
+* **Zero Toggle Power:** In CMOS logic, dynamic power is proportional to switching activity: $P_{\text{dyn}} = \alpha \cdot C \cdot V^2 \cdot f$. Because inputs to the lower carry chain bits are tied to constant zero, their switching activity factor drops to zero ($\alpha = 0$). Dynamic power in the unneeded adder slices and LFSR stages is eliminated.
 * **Area Overhead:** Less than **1.5%** over a fixed 13-bit adder (11 AND gates + 3-bit register).
 
 ### 5.3 Quantitative Trade-off Matrix
@@ -149,6 +174,8 @@ In `fp12_add_sr_adaptive.v`:
 | **Layer-ASR (Our Innovation)** | **10.12** | **91.29%** | **$+26.2\%$ vs $r=13$** ($+49.2\%$ vs $r=18$) | **$+22.1\%$ vs $r=13$** ($+43.8\%$ vs $r=18$) | **$0.43\,\text{nW/MHz}$** |
 | **Hybrid-ASR (Our Innovation)** | **9.40** | **91.35%** | **$+32.7\%$ vs $r=13$** ($+53.8\%$ vs $r=18$) | **$+27.7\%$ vs $r=13$** ($+47.8\%$ vs $r=18$) | **$0.39\,\text{nW/MHz}$** |
 
+*Table 4: Innovation Trade-off Matrix: Proposed Adaptive Stochastic Rounding against Fixed Baselines.*
+
 ![Figure 5: Adaptive Power Trade-Off](report/figures/fig5_adaptive_power_tradeoff.png)
 *Figure 5: Adaptive Stochastic Rounding (ASR) Innovation: (a) Cosine annealing precision schedule resulting in mean active bits 9.98; (b) Dynamic power dissipation breakdown showing 27.4% to 32.7% savings over fixed 13-bit SR.*
 
@@ -156,7 +183,7 @@ In `fp12_add_sr_adaptive.v`:
 
 ## 6. Explicit Demarcation: Reproduced Work vs. Proposed Contributions
 
-To uphold academic integrity, the table below explicitly distinguishes elements reproduced from the DATE 2024 paper from our original proposed innovations.
+To uphold academic integrity, Table 5 explicitly distinguishes elements reproduced from the DATE 2024 paper from our original proposed innovations.
 
 | Reproduced from DATE 2024 Paper | Our Own Proposed Contributions / Innovations |
 | :--- | :--- |
@@ -167,6 +194,8 @@ To uphold academic integrity, the table below explicitly distinguishes elements 
 | $\bullet$ Baseline training benchmarks for FP32, FP16, and FP12 Eager ($r=18$) on ResNet-20. | $\bullet$ **Novel hardware RTL architecture** with MSB-aligned dynamic operand gating (`fp12_add_sr_adaptive.v`). |
 | | $\bullet$ **Implementation of Phase-ASR, Layer-ASR, and Hybrid-ASR controllers** in PyTorch emulator. |
 | | $\bullet$ **Demonstration of 27.4% to 32.7% dynamic power savings** with matching 91.38% accuracy. |
+
+*Table 5: Explicit Demarcation of Reproduced Work vs. Proposed Contributions.*
 
 ---
 
